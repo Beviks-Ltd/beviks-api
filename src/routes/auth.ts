@@ -628,3 +628,582 @@ authRouter.get("/upload-url", (req: Request, res: Response): any => {
     publicUrl: publicUrl
   });
 });
+
+/**
+ * @openapi
+ * /api/auth/login/traditional:
+ *   post:
+ *     summary: Traditional Credentials Login
+ *     description: Authenticates user using email and password, returning an access token and user flags.
+ *     tags:
+ *       - Authentication
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: john.doe@example.com
+ *               password:
+ *                 type: string
+ *                 format: password
+ *                 example: securePassword123
+ *     responses:
+ *       200:
+ *         description: Login successful.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 user:
+ *                   $ref: '#/components/schemas/UserResponse'
+ *                 token:
+ *                   type: string
+ *       400:
+ *         description: Missing fields or invalid credentials.
+ */
+authRouter.post("/login/traditional", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: "Missing required fields: email, password" });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email },
+      include: { designerProfile: true }
+    });
+
+    if (!user || !user.passwordHash) {
+      return res.status(400).json({ error: "Invalid email or password" });
+    }
+
+    const passwordMatch = await bcrypt.compare(password, user.passwordHash);
+    if (!passwordMatch) {
+      return res.status(400).json({ error: "Invalid email or password" });
+    }
+
+    const token = generateToken(user);
+
+    return res.status(200).json({
+      message: "Login successful",
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.fullName,
+        phoneNumber: user.phoneNumber,
+        gender: user.gender,
+        dateOfBirth: user.dateOfBirth,
+        role: user.role,
+        isEmailVerified: user.isEmailVerified,
+        isIdentityVerified: user.designerProfile?.isIdentityVerified || false,
+        createdAt: user.createdAt
+      },
+      token
+    });
+  } catch (error: any) {
+    console.error("Traditional login error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+/**
+ * @openapi
+ * /api/auth/login/social:
+ *   post:
+ *     summary: Social OAuth Login
+ *     description: Logs in users via Apple or Google credentials.
+ *     tags:
+ *       - Authentication
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - socialProvider
+ *               - socialId
+ *             properties:
+ *               socialProvider:
+ *                 type: string
+ *                 enum: [GOOGLE, APPLE]
+ *                 example: GOOGLE
+ *               socialId:
+ *                 type: string
+ *                 example: "109283749201"
+ *     responses:
+ *       200:
+ *         description: Social login successful.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 user:
+ *                   $ref: '#/components/schemas/UserResponse'
+ *                 token:
+ *                   type: string
+ *       400:
+ *         description: Missing fields or invalid credentials.
+ */
+authRouter.post("/login/social", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { socialProvider, socialId } = req.body;
+
+    if (!socialProvider || !socialId) {
+      return res.status(400).json({ error: "Missing required fields: socialProvider, socialId" });
+    }
+
+    if (socialProvider !== "GOOGLE" && socialProvider !== "APPLE") {
+      return res.status(400).json({ error: "Invalid social provider. Must be GOOGLE or APPLE." });
+    }
+
+    const user = await prisma.user.findFirst({
+      where: { socialProvider, socialId },
+      include: { designerProfile: true }
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: "Social account not found. Please register first." });
+    }
+
+    const token = generateToken(user);
+
+    return res.status(200).json({
+      message: "Social login successful",
+      user: {
+        id: user.id,
+        email: user.email,
+        fullName: user.fullName,
+        phoneNumber: user.phoneNumber,
+        gender: user.gender,
+        dateOfBirth: user.dateOfBirth,
+        role: user.role,
+        isEmailVerified: user.isEmailVerified,
+        isIdentityVerified: user.designerProfile?.isIdentityVerified || false,
+        createdAt: user.createdAt
+      },
+      token
+    });
+  } catch (error: any) {
+    console.error("Social login error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+/**
+ * @openapi
+ * /api/auth/forgot-password:
+ *   post:
+ *     summary: Request Password Reset
+ *     description: Triggers a password reset token, simulating the emailing of a reset form link.
+ *     tags:
+ *       - Authentication
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: john.doe@example.com
+ *     responses:
+ *       200:
+ *         description: Reset email trigger simulation completed.
+ *       404:
+ *         description: Email address not found.
+ */
+authRouter.post("/forgot-password", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: "Email parameter is required." });
+    }
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      return res.status(404).json({ error: "No account exists with this email address." });
+    }
+
+    // Generate reset token (expires in 1 hour)
+    const resetToken = jwt.sign({ email: user.email }, JWT_SECRET, { expiresIn: "1h" });
+    const resetLink = `http://localhost:3000/api/auth/reset-password?token=${resetToken}`;
+
+    // Normally we send an email, we'll log it and return it in the response for simulation
+    console.log(`[Email Sent] Password reset link for ${user.email}: ${resetLink}`);
+
+    return res.status(200).json({
+      message: "Password reset link generated and email sent (simulated).",
+      resetLink
+    });
+  } catch (error: any) {
+    console.error("Forgot password error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+/**
+ * @openapi
+ * /api/auth/reset-password:
+ *   get:
+ *     summary: Render Password Reset Form
+ *     description: Serves the HTML file for resetting password.
+ *     tags:
+ *       - Authentication
+ *     parameters:
+ *       - in: query
+ *         name: token
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The reset token.
+ *     responses:
+ *       200:
+ *         description: Form HTML rendered.
+ *       400:
+ *         description: Invalid or expired token.
+ */
+authRouter.get("/reset-password", (req: Request, res: Response): any => {
+  const { token } = req.query;
+
+  if (!token || typeof token !== "string") {
+    return res.status(400).send(`
+      <html>
+        <body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
+          <h2 style="color: #c62828;">Error</h2>
+          <p>Reset token is missing.</p>
+        </body>
+      </html>
+    `);
+  }
+
+  try {
+    // Verify token validity
+    jwt.verify(token, JWT_SECRET);
+
+    // Serve HTML form
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Reset Password - Beviks</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <link rel="preconnect" href="https://fonts.googleapis.com">
+          <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+          <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+          <style>
+            * {
+              box-sizing: border-box;
+              font-family: 'Outfit', sans-serif;
+            }
+            body {
+              background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+              min-height: 100vh;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              margin: 0;
+              padding: 20px;
+              color: #f1f5f9;
+            }
+            .card {
+              background: rgba(30, 41, 59, 0.7);
+              backdrop-filter: blur(16px);
+              border: 1px solid rgba(255, 255, 255, 0.1);
+              padding: 40px;
+              border-radius: 20px;
+              width: 100%;
+              max-width: 420px;
+              box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+            }
+            h2 {
+              margin: 0 0 10px 0;
+              font-weight: 700;
+              text-align: center;
+              background: linear-gradient(to right, #38bdf8, #818cf8);
+              -webkit-background-clip: text;
+              -webkit-text-fill-color: transparent;
+            }
+            p.desc {
+              color: #94a3b8;
+              font-size: 14px;
+              text-align: center;
+              margin: 0 0 25px 0;
+            }
+            .form-group {
+              margin-bottom: 20px;
+            }
+            label {
+              display: block;
+              margin-bottom: 8px;
+              font-size: 13px;
+              font-weight: 600;
+              color: #cbd5e1;
+              text-transform: uppercase;
+              letter-spacing: 0.05em;
+            }
+            input {
+              width: 100%;
+              padding: 12px 16px;
+              border-radius: 8px;
+              border: 1px solid rgba(255, 255, 255, 0.1);
+              background: rgba(15, 23, 42, 0.6);
+              color: #fff;
+              font-size: 15px;
+              transition: all 0.2s ease;
+            }
+            input:focus {
+              outline: none;
+              border-color: #6366f1;
+              box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+            }
+            .btn {
+              width: 100%;
+              padding: 12px;
+              background: linear-gradient(to right, #6366f1, #4f46e5);
+              border: none;
+              border-radius: 8px;
+              color: white;
+              font-weight: 600;
+              font-size: 15px;
+              cursor: pointer;
+              transition: transform 0.1s ease, filter 0.2s ease;
+              box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+            }
+            .btn:hover {
+              filter: brightness(1.1);
+            }
+            .btn:active {
+              transform: scale(0.98);
+            }
+            .error-msg {
+              color: #ef4444;
+              font-size: 12px;
+              margin-top: 5px;
+              display: none;
+            }
+          </style>
+          <script>
+            function validateForm(e) {
+              const p = document.getElementById("password").value;
+              const cp = document.getElementById("confirm").value;
+              const err = document.getElementById("err");
+              
+              if (p.length < 6) {
+                e.preventDefault();
+                err.innerText = "Password must be at least 6 characters long.";
+                err.style.display = "block";
+                return false;
+              }
+              if (p !== cp) {
+                e.preventDefault();
+                err.innerText = "Passwords do not match.";
+                err.style.display = "block";
+                return false;
+              }
+              return true;
+            }
+          </script>
+        </head>
+        <body>
+          <div class="card">
+            <h2>Reset Password</h2>
+            <p class="desc">Enter a secure new password for your Beviks account.</p>
+            <form action="/api/auth/reset-password" method="POST" onsubmit="return validateForm(event)">
+              <input type="hidden" name="token" value="${token}" />
+              <div class="form-group">
+                <label for="password">New Password</label>
+                <input type="password" id="password" name="password" required placeholder="••••••••" />
+              </div>
+              <div class="form-group">
+                <label for="confirm">Confirm Password</label>
+                <input type="password" id="confirm" required placeholder="••••••••" />
+              </div>
+              <div id="err" class="error-msg"></div>
+              <button type="submit" class="btn">Update Password</button>
+            </form>
+          </div>
+        </body>
+      </html>
+    `);
+  } catch (error: any) {
+    return res.status(400).send(`
+      <html>
+        <body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
+          <h2 style="color: #c62828;">Link Expired</h2>
+          <p>The password reset link is invalid or has expired. Please request a new link.</p>
+        </body>
+      </html>
+    `);
+  }
+});
+
+/**
+ * @openapi
+ * /api/auth/reset-password:
+ *   post:
+ *     summary: Apply Password Reset
+ *     description: Receives the token and new password, performs verification, hashes the password, and updates database.
+ *     tags:
+ *       - Authentication
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - token
+ *               - password
+ *             properties:
+ *               token:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *                 format: password
+ *         application/x-www-form-urlencoded:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - token
+ *               - password
+ *             properties:
+ *               token:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *                 format: password
+ *     responses:
+ *       200:
+ *         description: Password updated successfully.
+ *       400:
+ *         description: Verification failed.
+ */
+authRouter.post("/reset-password", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { token, password } = req.body;
+
+    if (!token || !password) {
+      if (req.headers["content-type"]?.includes("form")) {
+        return res.status(400).send(`
+          <html>
+            <body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
+              <h2 style="color: #c62828;">Error</h2>
+              <p>Missing token or password parameters.</p>
+            </body>
+          </html>
+        `);
+      }
+      return res.status(400).json({ error: "Missing token or password parameters." });
+    }
+
+    const decoded = jwt.verify(token, JWT_SECRET) as { email: string };
+    if (!decoded || !decoded.email) {
+      if (req.headers["content-type"]?.includes("form")) {
+        return res.status(400).send(`
+          <html>
+            <body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
+              <h2 style="color: #c62828;">Invalid Token</h2>
+              <p>The password reset link is invalid or expired.</p>
+            </body>
+          </html>
+        `);
+      }
+      return res.status(400).json({ error: "Invalid token." });
+    }
+
+    const user = await prisma.user.findUnique({ where: { email: decoded.email } });
+    if (!user) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    await prisma.user.update({
+      where: { email: decoded.email },
+      data: { passwordHash }
+    });
+
+    if (req.headers["content-type"]?.includes("form") || req.accepts("html")) {
+      return res.send(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>Password Reset Successful - Beviks</title>
+            <link rel="preconnect" href="https://fonts.googleapis.com">
+            <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+            <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+            <style>
+              body {
+                background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                margin: 0;
+                color: #f1f5f9;
+                font-family: 'Outfit', sans-serif;
+              }
+              .card {
+                background: rgba(30, 41, 59, 0.7);
+                backdrop-filter: blur(16px);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                padding: 40px;
+                border-radius: 20px;
+                width: 100%;
+                max-width: 420px;
+                text-align: center;
+                box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+              }
+              h2 {
+                color: #10b981;
+                margin-top: 0;
+              }
+              p {
+                color: #cbd5e1;
+                margin-bottom: 25px;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <h2>Success!</h2>
+              <p>Your password has been successfully updated. You may now return to the app and log in.</p>
+            </div>
+          </body>
+        </html>
+      `);
+    }
+
+    return res.status(200).json({ message: "Password updated successfully." });
+  } catch (error: any) {
+    console.error("Reset password apply error:", error);
+    if (req.headers["content-type"]?.includes("form")) {
+      return res.status(400).send(`
+        <html>
+          <body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
+            <h2 style="color: #c62828;">Link Expired</h2>
+            <p>The password reset link is invalid or expired. Please request a new link.</p>
+          </body>
+        </html>
+      `);
+    }
+    return res.status(400).json({ error: "Invalid or expired token." });
+  }
+});

@@ -40,6 +40,11 @@ model User {
   
   designerProfile  DesignerProfile?
   store            Store?
+  posts            Post[]
+  postLikes        PostLike[]
+  comments         Comment[]
+  commentLikes     CommentLike[]
+  quoteRequests    QuoteRequest[]
 }
 
 model DesignerProfile {
@@ -65,4 +70,81 @@ model Store {
   status      StoreStatus @default(PENDING_VERIFICATION)
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
+}
+
+model Post {
+  id            String         @id @default(uuid())
+  designerId    String
+  designer      User           @relation(fields: [designerId], references: [id], onDelete: Cascade)
+  caption       String?
+  quoteEnabled  Boolean        @default(false)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  
+  media         PostMedia[]
+  likes         PostLike[]
+  comments      Comment[]
+  quoteRequests QuoteRequest[]
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+}
+
+model PostMedia {
+  id        String    @id @default(uuid())
+  postId    String
+  post      Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  url       String
+  type      MediaType
+  order     Int       @default(0)
+  createdAt DateTime  @default(now())
+}
+
+model PostLike {
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([postId, userId])
+}
+
+model Comment {
+  id        String        @id @default(uuid())
+  postId    String
+  post      Post          @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content   String
+  parentId  String?
+  parent    Comment?      @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   Comment[]     @relation("CommentReplies")
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  
+  likes     CommentLike[]
+}
+
+model CommentLike {
+  commentId String
+  comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([commentId, userId])
+}
+
+model QuoteRequest {
+  id          String   @id @default(uuid())
+  postId      String
+  post        Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  designerId  String
+  customerId  String
+  customer    User     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  notes       String?
+  createdAt   DateTime @default(now())
 }

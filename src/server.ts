@@ -6,6 +6,9 @@ import swaggerUi from "swagger-ui-express";
 import { authRouter } from "./routes/auth.js";
 import { storeRouter } from "./routes/store.js";
 import { storePostRouter } from "./routes/post.js";
+import { metadataRouter } from "./routes/metadata.js";
+import { pieceRouter } from "./routes/piece.js";
+import { collectionRouter } from "./routes/collection.js";
 
 dotenv.config();
 
@@ -48,6 +51,9 @@ app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.use("/api/auth", authRouter);
 app.use("/api/stores", storeRouter);
 app.use("/api/posts", storePostRouter);
+app.use("/api/metadata", metadataRouter);
+app.use("/api", pieceRouter);
+app.use("/api", collectionRouter);
 
 // Home route to redirect to API Docs
 app.get("/", (req, res) => {

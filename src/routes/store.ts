@@ -29,6 +29,14 @@ export const storeRouter = Router();
  *           type: string
  *         status:
  *           $ref: '#/components/schemas/StoreStatus'
+ *         views:
+ *           type: integer
+ *         salesCount:
+ *           type: integer
+ *         piecesCount:
+ *           type: integer
+ *         collectionsCount:
+ *           type: integer
  *         createdAt:
  *           type: string
  *           format: date-time
@@ -175,12 +183,23 @@ storeRouter.get("/my-store", async (req: Request, res: Response): Promise<any> =
       return res.status(400).json({ error: "designerId query parameter is required." });
     }
 
-    const store = await prisma.store.findUnique({ where: { designerId } });
+    const store = await prisma.store.findUnique({
+      where: { designerId },
+      include: {
+        _count: {
+          select: { pieces: true, collections: true }
+        }
+      }
+    });
     if (!store) {
       return res.status(404).json({ error: "Store not found for this designer." });
     }
 
-    return res.status(200).json(store);
+    return res.status(200).json({
+      ...store,
+      piecesCount: store._count.pieces,
+      collectionsCount: store._count.collections
+    });
   } catch (error: any) {
     console.error("Get my store error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
@@ -319,7 +338,32 @@ storeRouter.get("/:id", async (req: Request, res: Response): Promise<any> => {
       });
     }
 
-    return res.status(200).json(store);
+    // Increment views if seen by a visitor
+    let finalViews = store.views;
+    if (store.designerId !== viewerId) {
+      const updatedStore = await prisma.store.update({
+        where: { id },
+        data: { views: { increment: 1 } }
+      });
+      finalViews = updatedStore.views;
+    }
+
+    // Get pieces and collections count
+    const stats = await prisma.store.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: { pieces: true, collections: true }
+        }
+      }
+    });
+
+    return res.status(200).json({
+      ...store,
+      views: finalViews,
+      piecesCount: stats?._count.pieces || 0,
+      collectionsCount: stats?._count.collections || 0
+    });
   } catch (error: any) {
     console.error("Get public store error:", error);
     return res.status(500).json({ error: "Internal Server Error" });

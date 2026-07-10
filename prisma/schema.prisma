@@ -68,8 +68,13 @@ model Store {
   logoUrl     String
   coverUrl    String
   status      StoreStatus @default(PENDING_VERIFICATION)
+  views       Int         @default(0)
+  salesCount  Int         @default(0)
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
+
+  pieces      Piece[]
+  collections Collection[]
 }
 
 model Post {
@@ -147,4 +152,50 @@ model QuoteRequest {
   customer    User     @relation(fields: [customerId], references: [id], onDelete: Cascade)
   notes       String?
   createdAt   DateTime @default(now())
+}
+
+model Piece {
+  id              String            @id @default(uuid())
+  storeId         String
+  store           Store             @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  name            String
+  description     String
+  price           Decimal           @db.Decimal(10, 2)
+  primaryImageUrl String
+  category        String
+  heritage        String
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  images          PieceImage[]
+  collections     CollectionPiece[]
+}
+
+model PieceImage {
+  id      String @id @default(uuid())
+  pieceId String
+  piece   Piece  @relation(fields: [pieceId], references: [id], onDelete: Cascade)
+  url     String
+  order   Int    @default(0)
+}
+
+model Collection {
+  id        String            @id @default(uuid())
+  storeId   String
+  store     Store             @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  name      String
+  story     String
+  imageUrl  String
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  pieces    CollectionPiece[]
+}
+
+model CollectionPiece {
+  collectionId String
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  pieceId      String
+  piece        Piece      @relation(fields: [pieceId], references: [id], onDelete: Cascade)
+  createdAt    DateTime   @default(now())
+
+  @@id([collectionId, pieceId])
 }

@@ -48,6 +48,11 @@ model User {
   measurementProfiles MeasurementProfile[]
   customerInquiries  QuoteInquiry[] @relation("CustomerInquiries")
   designerInquiries  QuoteInquiry[] @relation("DesignerInquiries")
+  designerOrders     Order[] @relation("DesignerOrders")
+  customerOrders     Order[] @relation("CustomerOrders")
+  chatRooms1         ChatRoom[] @relation("ChatRoomUser1")
+  chatRooms2         ChatRoom[] @relation("ChatRoomUser2")
+  sentMessages       ChatMessage[]
 }
 
 model DesignerProfile {
@@ -209,6 +214,7 @@ model QuoteInquiry {
   createdAt            DateTime            @default(now())
   
   inspirations         InspirationImage[]
+  quotation            Quotation?
 }
 
 model InspirationImage {
@@ -263,4 +269,62 @@ model CollectionPiece {
   createdAt    DateTime   @default(now())
 
   @@id([collectionId, pieceId])
+}
+
+model Quotation {
+  id                         String       @id @default(uuid())
+  inquiryId                  String       @unique
+  inquiry                    QuoteInquiry @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  
+  materialFabricCost         Decimal      @db.Decimal(10, 2)
+  tailoringCraftsmanshipCost Decimal      @db.Decimal(10, 2)
+  embellishmentCost          Decimal      @db.Decimal(10, 2)
+  fittingCost                Decimal      @db.Decimal(10, 2)
+  
+  expectedCompletionDate     DateTime
+  terms                      String?
+  depositNotes               String?
+  status                     String       @default("PENDING") // PENDING, ACCEPTED, REJECTED
+  
+  createdAt                  DateTime     @default(now())
+  updatedAt                  DateTime     @updatedAt
+  order                      Order?
+}
+
+model Order {
+  id          String    @id @default(uuid())
+  quotationId String    @unique
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  designerId  String
+  designer    User      @relation("DesignerOrders", fields: [designerId], references: [id], onDelete: Cascade)
+  customerId  String
+  customer    User      @relation("CustomerOrders", fields: [customerId], references: [id], onDelete: Cascade)
+  status      String    @default("CONFIRMED") // CONFIRMED, IN_PRODUCTION, COMPLETED, etc.
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model ChatRoom {
+  id        String        @id @default(uuid())
+  user1Id   String
+  user1     User          @relation("ChatRoomUser1", fields: [user1Id], references: [id], onDelete: Cascade)
+  user2Id   String
+  user2     User          @relation("ChatRoomUser2", fields: [user2Id], references: [id], onDelete: Cascade)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  messages  ChatMessage[]
+
+  @@unique([user1Id, user2Id])
+}
+
+model ChatMessage {
+  id         String   @id @default(uuid())
+  roomId     String
+  room       ChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  senderId   String
+  sender     User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  content    String
+  mediaUrl   String?
+  isDeleted  Boolean  @default(false)
+  createdAt  DateTime @default(now())
 }

@@ -11,6 +11,11 @@ import { pieceRouter } from "./routes/piece.js";
 import { collectionRouter } from "./routes/collection.js";
 import { measurementRouter } from "./routes/measurement.js";
 import { inquiryRouter } from "./routes/inquiry.js";
+import { quotationRouter } from "./routes/quotation.js";
+import { closetRouter } from "./routes/closet.js";
+import { orderRouter } from "./routes/order.js";
+import { chatRouter } from "./routes/chat.js";
+
 
 dotenv.config();
 
@@ -58,16 +63,14 @@ app.use("/api", pieceRouter);
 app.use("/api", collectionRouter);
 app.use("/api/measurements", measurementRouter);
 app.use("/api", inquiryRouter);
+app.use("/api", quotationRouter);
+app.use("/api", closetRouter);
+app.use("/api", orderRouter);
+app.use("/api", chatRouter);
 
 // Home route to redirect to API Docs
 app.get("/", (req, res) => {
   res.redirect("/api-docs");
 });
 
-// Start Server
-app.listen(PORT, () => {
-  console.log(`===================================================`);
-  console.log(`🚀 Beviks API server running at http://localhost:${PORT}`);
-  console.log(`📝 Swagger Docs available at http://localhost:${PORT}/api-docs`);
-  console.log(`===================================================`);
-});
+export { app };

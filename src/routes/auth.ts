@@ -556,20 +556,114 @@ authRouter.get("/verify-email", async (req: Request, res: Response): Promise<any
 
     // Provide a simple HTML page or JSON response
     return res.send(`
+      <!DOCTYPE html>
       <html>
-        <body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
-          <h2 style="color: #2e7d32;">Email Verified Successfully!</h2>
-          <p>You can now return to the application.</p>
+        <head>
+          <title>Email Verified - Beviks</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <link rel="preconnect" href="https://fonts.googleapis.com">
+          <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+          <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+          <style>
+            * {
+              box-sizing: border-box;
+              font-family: 'Outfit', sans-serif;
+            }
+            body {
+              background-color: #FFFFFF;
+              min-height: 100vh;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              margin: 0;
+              padding: 20px;
+              color: #C4080E;
+            }
+            .card {
+              background: #FFFFFF;
+              border: 1px solid rgba(196, 8, 14, 0.15);
+              padding: 40px;
+              border-radius: 20px;
+              width: 100%;
+              max-width: 420px;
+              box-shadow: 0 10px 30px rgba(196, 8, 14, 0.06);
+              text-align: center;
+            }
+            h2 {
+              margin: 0 0 10px 0;
+              font-weight: 700;
+              color: #C4080E;
+            }
+            p {
+              color: #C4080E;
+              opacity: 0.85;
+              font-size: 15px;
+              margin: 0;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h2>Email Verified!</h2>
+            <p>Your email has been verified. You can now return to the application.</p>
+          </div>
         </body>
       </html>
     `);
   } catch (error: any) {
     console.error("Email verification error:", error);
     return res.status(400).send(`
+      <!DOCTYPE html>
       <html>
-        <body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
-          <h2 style="color: #c62828;">Verification Failed</h2>
-          <p>The verification link is invalid or has expired.</p>
+        <head>
+          <title>Verification Failed - Beviks</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <link rel="preconnect" href="https://fonts.googleapis.com">
+          <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+          <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+          <style>
+            * {
+              box-sizing: border-box;
+              font-family: 'Outfit', sans-serif;
+            }
+            body {
+              background-color: #FFFFFF;
+              min-height: 100vh;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              margin: 0;
+              padding: 20px;
+              color: #C4080E;
+            }
+            .card {
+              background: #FFFFFF;
+              border: 1px solid rgba(196, 8, 14, 0.15);
+              padding: 40px;
+              border-radius: 20px;
+              width: 100%;
+              max-width: 420px;
+              box-shadow: 0 10px 30px rgba(196, 8, 14, 0.06);
+              text-align: center;
+            }
+            h2 {
+              margin: 0 0 10px 0;
+              font-weight: 700;
+              color: #C4080E;
+            }
+            p {
+              color: #C4080E;
+              opacity: 0.85;
+              font-size: 15px;
+              margin: 0;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h2>Verification Failed</h2>
+            <p>The verification link is invalid or has expired.</p>
+          </div>
         </body>
       </html>
     `);
@@ -884,10 +978,57 @@ authRouter.get("/reset-password", (req: Request, res: Response): any => {
 
   if (!token || typeof token !== "string") {
     return res.status(400).send(`
+      <!DOCTYPE html>
       <html>
-        <body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
-          <h2 style="color: #c62828;">Error</h2>
-          <p>Reset token is missing.</p>
+        <head>
+          <title>Error - Beviks</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <link rel="preconnect" href="https://fonts.googleapis.com">
+          <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+          <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+          <style>
+            * {
+              box-sizing: border-box;
+              font-family: 'Outfit', sans-serif;
+            }
+            body {
+              background-color: #FFFFFF;
+              min-height: 100vh;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              margin: 0;
+              padding: 20px;
+              color: #C4080E;
+            }
+            .card {
+              background: #FFFFFF;
+              border: 1px solid rgba(196, 8, 14, 0.15);
+              padding: 40px;
+              border-radius: 20px;
+              width: 100%;
+              max-width: 420px;
+              box-shadow: 0 10px 30px rgba(196, 8, 14, 0.06);
+              text-align: center;
+            }
+            h2 {
+              margin: 0 0 10px 0;
+              font-weight: 700;
+              color: #C4080E;
+            }
+            p {
+              color: #C4080E;
+              opacity: 0.85;
+              font-size: 15px;
+              margin: 0;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h2>Error</h2>
+            <p>Reset token is missing.</p>
+          </div>
         </body>
       </html>
     `);
@@ -913,35 +1054,33 @@ authRouter.get("/reset-password", (req: Request, res: Response): any => {
               font-family: 'Outfit', sans-serif;
             }
             body {
-              background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+              background-color: #FFFFFF;
               min-height: 100vh;
               display: flex;
               align-items: center;
               justify-content: center;
               margin: 0;
               padding: 20px;
-              color: #f1f5f9;
+              color: #C4080E;
             }
             .card {
-              background: rgba(30, 41, 59, 0.7);
-              backdrop-filter: blur(16px);
-              border: 1px solid rgba(255, 255, 255, 0.1);
+              background: #FFFFFF;
+              border: 1px solid rgba(196, 8, 14, 0.15);
               padding: 40px;
               border-radius: 20px;
               width: 100%;
               max-width: 420px;
-              box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+              box-shadow: 0 10px 30px rgba(196, 8, 14, 0.06);
             }
             h2 {
               margin: 0 0 10px 0;
               font-weight: 700;
               text-align: center;
-              background: linear-gradient(to right, #38bdf8, #818cf8);
-              -webkit-background-clip: text;
-              -webkit-text-fill-color: transparent;
+              color: #C4080E;
             }
             p.desc {
-              color: #94a3b8;
+              color: #C4080E;
+              opacity: 0.85;
               font-size: 14px;
               text-align: center;
               margin: 0 0 25px 0;
@@ -954,7 +1093,7 @@ authRouter.get("/reset-password", (req: Request, res: Response): any => {
               margin-bottom: 8px;
               font-size: 13px;
               font-weight: 600;
-              color: #cbd5e1;
+              color: #C4080E;
               text-transform: uppercase;
               letter-spacing: 0.05em;
             }
@@ -962,29 +1101,29 @@ authRouter.get("/reset-password", (req: Request, res: Response): any => {
               width: 100%;
               padding: 12px 16px;
               border-radius: 8px;
-              border: 1px solid rgba(255, 255, 255, 0.1);
-              background: rgba(15, 23, 42, 0.6);
-              color: #fff;
+              border: 1px solid rgba(196, 8, 14, 0.25);
+              background: #FFFFFF;
+              color: #C4080E;
               font-size: 15px;
               transition: all 0.2s ease;
             }
             input:focus {
               outline: none;
-              border-color: #6366f1;
-              box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+              border-color: #C4080E;
+              box-shadow: 0 0 0 3px rgba(196, 8, 14, 0.2);
             }
             .btn {
               width: 100%;
               padding: 12px;
-              background: linear-gradient(to right, #6366f1, #4f46e5);
+              background: #C4080E;
               border: none;
               border-radius: 8px;
-              color: white;
+              color: #FFFFFF;
               font-weight: 600;
               font-size: 15px;
               cursor: pointer;
               transition: transform 0.1s ease, filter 0.2s ease;
-              box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+              box-shadow: 0 4px 12px rgba(196, 8, 14, 0.2);
             }
             .btn:hover {
               filter: brightness(1.1);
@@ -993,10 +1132,11 @@ authRouter.get("/reset-password", (req: Request, res: Response): any => {
               transform: scale(0.98);
             }
             .error-msg {
-              color: #ef4444;
+              color: #C4080E;
               font-size: 12px;
               margin-top: 5px;
               display: none;
+              font-weight: bold;
             }
           </style>
           <script>
@@ -1044,10 +1184,57 @@ authRouter.get("/reset-password", (req: Request, res: Response): any => {
     `);
   } catch (error: any) {
     return res.status(400).send(`
+      <!DOCTYPE html>
       <html>
-        <body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
-          <h2 style="color: #c62828;">Link Expired</h2>
-          <p>The password reset link is invalid or has expired. Please request a new link.</p>
+        <head>
+          <title>Link Expired - Beviks</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <link rel="preconnect" href="https://fonts.googleapis.com">
+          <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+          <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+          <style>
+            * {
+              box-sizing: border-box;
+              font-family: 'Outfit', sans-serif;
+            }
+            body {
+              background-color: #FFFFFF;
+              min-height: 100vh;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              margin: 0;
+              padding: 20px;
+              color: #C4080E;
+            }
+            .card {
+              background: #FFFFFF;
+              border: 1px solid rgba(196, 8, 14, 0.15);
+              padding: 40px;
+              border-radius: 20px;
+              width: 100%;
+              max-width: 420px;
+              box-shadow: 0 10px 30px rgba(196, 8, 14, 0.06);
+              text-align: center;
+            }
+            h2 {
+              margin: 0 0 10px 0;
+              font-weight: 700;
+              color: #C4080E;
+            }
+            p {
+              color: #C4080E;
+              opacity: 0.85;
+              font-size: 15px;
+              margin: 0;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h2>Link Expired</h2>
+            <p>The password reset link is invalid or has expired. Please request a new link.</p>
+          </div>
         </body>
       </html>
     `);
@@ -1117,10 +1304,57 @@ authRouter.post("/reset-password", async (req: Request, res: Response): Promise<
     if (!decoded || !decoded.email) {
       if (req.headers["content-type"]?.includes("form")) {
         return res.status(400).send(`
+          <!DOCTYPE html>
           <html>
-            <body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
-              <h2 style="color: #c62828;">Invalid Token</h2>
-              <p>The password reset link is invalid or expired.</p>
+            <head>
+              <title>Invalid Token - Beviks</title>
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <link rel="preconnect" href="https://fonts.googleapis.com">
+              <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+              <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+              <style>
+                * {
+                  box-sizing: border-box;
+                  font-family: 'Outfit', sans-serif;
+                }
+                body {
+                  background-color: #FFFFFF;
+                  min-height: 100vh;
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  margin: 0;
+                  padding: 20px;
+                  color: #C4080E;
+                }
+                .card {
+                  background: #FFFFFF;
+                  border: 1px solid rgba(196, 8, 14, 0.15);
+                  padding: 40px;
+                  border-radius: 20px;
+                  width: 100%;
+                  max-width: 420px;
+                  box-shadow: 0 10px 30px rgba(196, 8, 14, 0.06);
+                  text-align: center;
+                }
+                h2 {
+                  margin: 0 0 10px 0;
+                  font-weight: 700;
+                  color: #C4080E;
+                }
+                p {
+                  color: #C4080E;
+                  opacity: 0.85;
+                  font-size: 15px;
+                  margin: 0;
+                }
+              </style>
+            </head>
+            <body>
+              <div class="card">
+                <h2>Invalid Token</h2>
+                <p>The password reset link is invalid or expired.</p>
+              </div>
             </body>
           </html>
         `);
@@ -1146,38 +1380,44 @@ authRouter.post("/reset-password", async (req: Request, res: Response): Promise<
         <html>
           <head>
             <title>Password Reset Successful - Beviks</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <link rel="preconnect" href="https://fonts.googleapis.com">
             <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
             <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
             <style>
+              * {
+                box-sizing: border-box;
+                font-family: 'Outfit', sans-serif;
+              }
               body {
-                background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+                background-color: #FFFFFF;
                 min-height: 100vh;
                 display: flex;
                 align-items: center;
                 justify-content: center;
                 margin: 0;
-                color: #f1f5f9;
-                font-family: 'Outfit', sans-serif;
+                padding: 20px;
+                color: #C4080E;
               }
               .card {
-                background: rgba(30, 41, 59, 0.7);
-                backdrop-filter: blur(16px);
-                border: 1px solid rgba(255, 255, 255, 0.1);
+                background: #FFFFFF;
+                border: 1px solid rgba(196, 8, 14, 0.15);
                 padding: 40px;
                 border-radius: 20px;
                 width: 100%;
                 max-width: 420px;
                 text-align: center;
-                box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+                box-shadow: 0 10px 30px rgba(196, 8, 14, 0.06);
               }
               h2 {
-                color: #10b981;
+                color: #C4080E;
                 margin-top: 0;
+                font-weight: 700;
               }
               p {
-                color: #cbd5e1;
-                margin-bottom: 25px;
+                color: #C4080E;
+                opacity: 0.85;
+                margin-bottom: 0;
               }
             </style>
           </head>
@@ -1196,10 +1436,57 @@ authRouter.post("/reset-password", async (req: Request, res: Response): Promise<
     console.error("Reset password apply error:", error);
     if (req.headers["content-type"]?.includes("form")) {
       return res.status(400).send(`
+        <!DOCTYPE html>
         <html>
-          <body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
-            <h2 style="color: #c62828;">Link Expired</h2>
-            <p>The password reset link is invalid or expired. Please request a new link.</p>
+          <head>
+            <title>Link Expired - Beviks</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <link rel="preconnect" href="https://fonts.googleapis.com">
+            <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+            <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+            <style>
+              * {
+                box-sizing: border-box;
+                font-family: 'Outfit', sans-serif;
+              }
+              body {
+                background-color: #FFFFFF;
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                margin: 0;
+                padding: 20px;
+                color: #C4080E;
+              }
+              .card {
+                background: #FFFFFF;
+                border: 1px solid rgba(196, 8, 14, 0.15);
+                padding: 40px;
+                border-radius: 20px;
+                width: 100%;
+                max-width: 420px;
+                box-shadow: 0 10px 30px rgba(196, 8, 14, 0.06);
+                text-align: center;
+              }
+              h2 {
+                margin: 0 0 10px 0;
+                font-weight: 700;
+                color: #C4080E;
+              }
+              p {
+                color: #C4080E;
+                opacity: 0.85;
+                font-size: 15px;
+                margin: 0;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <h2>Link Expired</h2>
+              <p>The password reset link is invalid or expired. Please request a new link.</p>
+            </div>
           </body>
         </html>
       `);

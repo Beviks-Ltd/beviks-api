@@ -1,1 +1,1 @@
-console.log("Hello, Beviks API!");
+import "./server.js";

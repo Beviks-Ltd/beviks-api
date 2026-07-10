@@ -1,0 +1,68 @@
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum UserRole {
+  CUSTOMER
+  DESIGNER
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum StoreStatus {
+  PENDING_VERIFICATION
+  VERIFIED
+  PRIVATE
+}
+
+model User {
+  id               String           @id @default(uuid())
+  email            String           @unique
+  passwordHash     String?          // Nullable for Google/Apple social registrations
+  fullName         String
+  phoneNumber      String?          // Nullable during Step 1 of registration
+  gender           Gender?          // Nullable during Step 1 of registration
+  dateOfBirth      DateTime?        // Nullable during Step 1 of registration
+  role             UserRole
+  isEmailVerified  Boolean          @default(false)
+  socialProvider   String?          // "GOOGLE" or "APPLE"
+  socialId         String?          // Unique ID from provider
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  
+  designerProfile  DesignerProfile?
+  store            Store?
+}
+
+model DesignerProfile {
+  id                String   @id @default(uuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  identityType      String?  // e.g. "PASSPORT", "DRIVERS_LICENSE"
+  identityFrontUrl  String?  // Cloudflare upload image link
+  identityBackUrl   String?  // Cloudflare upload image link
+  isIdentityVerified Boolean @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model Store {
+  id          String      @id @default(uuid())
+  designerId  String      @unique
+  designer    User        @relation(fields: [designerId], references: [id], onDelete: Cascade)
+  name        String
+  description String
+  logoUrl     String
+  coverUrl    String
+  status      StoreStatus @default(PENDING_VERIFICATION)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+}

@@ -40,11 +40,14 @@ model User {
   
   designerProfile  DesignerProfile?
   store            Store?
-  posts            Post[]
-  postLikes        PostLike[]
-  comments         Comment[]
-  commentLikes     CommentLike[]
-  quoteRequests    QuoteRequest[]
+  posts              Post[]
+  postLikes          PostLike[]
+  comments           Comment[]
+  commentLikes       CommentLike[]
+  profileImageUrl    String?
+  measurementProfiles MeasurementProfile[]
+  customerInquiries  QuoteInquiry[] @relation("CustomerInquiries")
+  designerInquiries  QuoteInquiry[] @relation("DesignerInquiries")
 }
 
 model DesignerProfile {
@@ -89,7 +92,6 @@ model Post {
   media         PostMedia[]
   likes         PostLike[]
   comments      Comment[]
-  quoteRequests QuoteRequest[]
 }
 
 enum MediaType {
@@ -143,15 +145,77 @@ model CommentLike {
   @@id([commentId, userId])
 }
 
-model QuoteRequest {
-  id          String   @id @default(uuid())
-  postId      String
-  post        Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
-  designerId  String
-  customerId  String
-  customer    User     @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  notes       String?
-  createdAt   DateTime @default(now())
+model MeasurementProfile {
+  id                 String   @id @default(uuid())
+  userId             String
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name               String
+  gender             String   // "MALE" or "FEMALE"
+  unit               String   // "cm" or "inch"
+  
+  // Female metrics
+  neck_circumference Float?
+  shoulder_width     Float?
+  bust_circumference Float?
+  under_bust         Float?
+  natural_waist      Float?
+  bicep_girth        Float?
+  wrist_circumference Float?
+  hips_full          Float?
+  skirt_length       Float?
+
+  // Male metrics
+  neck_collar        Float?
+  shoulder_breadth   Float?
+  chest_girth        Float?
+  stomach_mid        Float?
+  waist_line         Float?
+  arm_hole           Float?
+  cuff_girth         Float?
+  seat_hips          Float?
+  outseam            Float?
+
+  // Shared metrics
+  sleeve_length      Float?
+  trouser_rise       Float?
+  inseam             Float?
+
+  // Cultural metrics
+  agbada_span        Float?
+  kaftan_length      Float?
+  head_circumference Float?
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  quoteInquiries     QuoteInquiry[]
+}
+
+model QuoteInquiry {
+  id                   String              @id @default(uuid())
+  pieceId              String
+  piece                Piece               @relation(fields: [pieceId], references: [id], onDelete: Cascade)
+  designerId           String
+  designer             User                @relation("DesignerInquiries", fields: [designerId], references: [id], onDelete: Cascade)
+  customerId           String
+  customer             User                @relation("CustomerInquiries", fields: [customerId], references: [id], onDelete: Cascade)
+  measurementProfileId String?
+  measurementProfile   MeasurementProfile? @relation(fields: [measurementProfileId], references: [id], onDelete: SetNull)
+  
+  specialInstructions  String?
+  budget               Decimal             @db.Decimal(10, 2)
+  colorPalette         String[]
+  material             String?
+  status               String              @default("PENDING") // PENDING, ACCEPTED, REJECTED
+  createdAt            DateTime            @default(now())
+  
+  inspirations         InspirationImage[]
+}
+
+model InspirationImage {
+  id             String       @id @default(uuid())
+  quoteInquiryId String
+  quoteInquiry   QuoteInquiry @relation(fields: [quoteInquiryId], references: [id], onDelete: Cascade)
+  url            String
 }
 
 model Piece {
@@ -168,6 +232,7 @@ model Piece {
   updatedAt       DateTime          @updatedAt
   images          PieceImage[]
   collections     CollectionPiece[]
+  quoteInquiries  QuoteInquiry[]
 }
 
 model PieceImage {

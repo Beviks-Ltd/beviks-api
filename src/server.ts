@@ -9,6 +9,8 @@ import { storePostRouter } from "./routes/post.js";
 import { metadataRouter } from "./routes/metadata.js";
 import { pieceRouter } from "./routes/piece.js";
 import { collectionRouter } from "./routes/collection.js";
+import { measurementRouter } from "./routes/measurement.js";
+import { inquiryRouter } from "./routes/inquiry.js";
 
 dotenv.config();
 
@@ -54,6 +56,8 @@ app.use("/api/posts", storePostRouter);
 app.use("/api/metadata", metadataRouter);
 app.use("/api", pieceRouter);
 app.use("/api", collectionRouter);
+app.use("/api/measurements", measurementRouter);
+app.use("/api", inquiryRouter);
 
 // Home route to redirect to API Docs
 app.get("/", (req, res) => {

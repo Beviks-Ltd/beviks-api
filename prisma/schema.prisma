@@ -54,6 +54,8 @@ model User {
   chatRooms2         ChatRoom[] @relation("ChatRoomUser2")
   sentMessages       ChatMessage[]
   notifications      Notification[]
+  designerReviews    Review[] @relation("DesignerReviews")
+  customerReviews    Review[] @relation("CustomerReviews")
 }
 
 model DesignerProfile {
@@ -309,6 +311,7 @@ model Order {
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
   timeline           OrderTimeline[]
+  review             Review?
 }
 
 model OrderTimeline {
@@ -356,4 +359,31 @@ model Notification {
   referenceId String?
   isRead      Boolean  @default(false)
   createdAt   DateTime @default(now())
+}
+
+model Review {
+  id            String        @id @default(uuid())
+  orderId       String        @unique
+  order         Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  designerId    String
+  designer      User          @relation("DesignerReviews", fields: [designerId], references: [id], onDelete: Cascade)
+  customerId    String
+  customer      User          @relation("CustomerReviews", fields: [customerId], references: [id], onDelete: Cascade)
+  
+  communication Int           // 1 to 5 stars
+  timeliness    Int           // 1 to 5 stars
+  quality       Int           // 1 to 5 stars
+  overall       Float         // Average score
+  description   String?
+  images        ReviewImage[]
+  
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+}
+
+model ReviewImage {
+  id       String @id @default(uuid())
+  reviewId String
+  review   Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  url      String
 }

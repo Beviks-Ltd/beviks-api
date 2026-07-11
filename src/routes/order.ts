@@ -296,6 +296,22 @@ orderRouter.get("/orders/:id", async (req: Request, res: Response): Promise<any>
       include: {
         customer: true,
         timeline: { orderBy: { createdAt: "desc" } },
+        designer: {
+          select: {
+            id: true,
+            fullName: true,
+            profileImageUrl: true,
+            email: true,
+            store: {
+              select: {
+                id: true,
+                name: true,
+                logoUrl: true,
+                description: true
+              }
+            }
+          }
+        },
         quotation: {
           include: {
             inquiry: {
@@ -327,8 +343,12 @@ orderRouter.get("/orders/:id", async (req: Request, res: Response): Promise<any>
       status: order.status,
       progressPercentage: order.progressPercentage,
       technicalSpecs: order.technicalSpecs,
+      cancellationReason: order.cancellationReason,
+      refundAmount: order.refundAmount ? Number(order.refundAmount) : null,
+      refundStatus: order.refundStatus,
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
+      designer: order.designer,
       customer: {
         id: order.customer.id,
         fullName: order.customer.fullName,
@@ -360,6 +380,90 @@ orderRouter.get("/orders/:id", async (req: Request, res: Response): Promise<any>
     return res.status(200).json(detailed);
   } catch (error: any) {
     console.error("Get order details error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+/**
+ * @openapi
+ * /api/users/{userId}/orders:
+ *   get:
+ *     summary: Retrieve Customer Orders
+ *     description: Lists all production orders (both active and completed) placed by a customer. Includes designer, storefront details, and sizing quotes.
+ *     tags:
+ *       - Orders
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: List of customer orders.
+ */
+orderRouter.get("/users/:userId/orders", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const userId = req.params.userId as string;
+
+    const customer = await prisma.user.findUnique({ where: { id: userId } });
+    if (!customer) {
+      return res.status(404).json({ error: "Customer account not found." });
+    }
+
+    const orders = await prisma.order.findMany({
+      where: { customerId: userId },
+      include: {
+        designer: {
+          select: {
+            id: true,
+            fullName: true,
+            profileImageUrl: true,
+            store: {
+              select: {
+                id: true,
+                name: true,
+                logoUrl: true
+              }
+            }
+          }
+        },
+        quotation: {
+          include: {
+            inquiry: {
+              include: {
+                piece: { select: { id: true, name: true, primaryImageUrl: true } }
+              }
+            }
+          }
+        }
+      },
+      orderBy: { createdAt: "desc" }
+    });
+
+    const formatted = orders.map(order => {
+      const q = order.quotation;
+      const totalAmount = Number(q.materialFabricCost) + 
+                          Number(q.tailoringCraftsmanshipCost) + 
+                          Number(q.embellishmentCost) + 
+                          Number(q.fittingCost);
+      return {
+        orderId: order.id,
+        status: order.status,
+        progressPercentage: order.progressPercentage,
+        acceptedDate: order.createdAt,
+        estimatedDelivery: q.expectedCompletionDate,
+        totalQuoteAmount: totalAmount,
+        pieceName: q.inquiry.piece.name,
+        pieceImageUrl: q.inquiry.piece.primaryImageUrl,
+        designer: order.designer
+      };
+    });
+
+    return res.status(200).json(formatted);
+  } catch (error: any) {
+    console.error("Get customer orders error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });

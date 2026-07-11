@@ -58,6 +58,15 @@ function generateVerificationToken(email: string) {
  *         socialProvider:
  *           type: string
  *           nullable: true
+ *         address:
+ *           type: string
+ *           nullable: true
+ *         bio:
+ *           type: string
+ *           nullable: true
+ *         profileImageUrl:
+ *           type: string
+ *           nullable: true
  *         createdAt:
  *           type: string
  *           format: date-time
@@ -1492,5 +1501,154 @@ authRouter.post("/reset-password", async (req: Request, res: Response): Promise<
       `);
     }
     return res.status(400).json({ error: "Invalid or expired token." });
+  }
+});
+
+/**
+ * @openapi
+ * /api/auth/profile/edit:
+ *   put:
+ *     summary: Edit User Profile
+ *     description: Modifies user account variables (fullName, email, phoneNumber, gender, dateOfBirth, address, bio, profileImageUrl) by matching the user's UUID.
+ *     tags:
+ *       - Authentication
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - userId
+ *             properties:
+ *               userId:
+ *                 type: string
+ *                 format: uuid
+ *                 example: e634127c-9b76-47ee-8cd6-c67ee59d9972
+ *               fullName:
+ *                 type: string
+ *                 example: Segun Designs
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 example: segundesigns@gmail.com
+ *               phoneNumber:
+ *                 type: string
+ *                 example: "+44 9-0163-1836"
+ *               gender:
+ *                 type: string
+ *                 enum: [MALE, FEMALE, OTHER]
+ *                 example: MALE
+ *               dateOfBirth:
+ *                 type: string
+ *                 format: date
+ *                 example: "1990-01-01"
+ *               address:
+ *                 type: string
+ *                 example: "United Kingdom"
+ *               bio:
+ *                 type: string
+ *                 example: "Bee Vogue"
+ *               profileImageUrl:
+ *                 type: string
+ *                 example: "https://cloudinary.com/user123.png"
+ *     responses:
+ *       200:
+ *         description: Profile updated successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message:
+ *                   type: string
+ *                 user:
+ *                   $ref: '#/components/schemas/UserResponse'
+ */
+authRouter.put("/profile/edit", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { userId, fullName, email, phoneNumber, gender, dateOfBirth, address, bio, profileImageUrl } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ error: "userId parameter is required." });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      return res.status(404).json({ error: "User profile not found." });
+    }
+
+    const updateData: any = {};
+
+    if (fullName !== undefined) {
+      updateData.fullName = fullName;
+    }
+
+    if (email !== undefined) {
+      const lowerEmail = email.toLowerCase().trim();
+      if (lowerEmail !== user.email) {
+        const emailExists = await prisma.user.findUnique({ where: { email: lowerEmail } });
+        if (emailExists) {
+          return res.status(400).json({ error: "Email address is already in use by another account." });
+        }
+        updateData.email = lowerEmail;
+      }
+    }
+
+    if (phoneNumber !== undefined) {
+      updateData.phoneNumber = phoneNumber;
+    }
+
+    if (gender !== undefined) {
+      if (gender && !["MALE", "FEMALE", "OTHER"].includes(gender)) {
+        return res.status(400).json({ error: "Invalid gender choice. Must be MALE, FEMALE, or OTHER." });
+      }
+      updateData.gender = gender || null;
+    }
+
+    if (dateOfBirth !== undefined) {
+      updateData.dateOfBirth = dateOfBirth ? new Date(dateOfBirth) : null;
+    }
+
+    if (address !== undefined) {
+      updateData.address = address;
+    }
+
+    if (bio !== undefined) {
+      updateData.bio = bio;
+    }
+
+    if (profileImageUrl !== undefined) {
+      updateData.profileImageUrl = profileImageUrl;
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: updateData
+    });
+
+    const token = generateToken(updated);
+
+    return res.status(200).json({
+      message: "Profile updated successfully.",
+      user: {
+        id: updated.id,
+        email: updated.email,
+        fullName: updated.fullName,
+        phoneNumber: updated.phoneNumber,
+        gender: updated.gender,
+        dateOfBirth: updated.dateOfBirth,
+        address: updated.address,
+        bio: updated.bio,
+        profileImageUrl: updated.profileImageUrl,
+        role: updated.role,
+        isEmailVerified: updated.isEmailVerified,
+        createdAt: updated.createdAt
+      },
+      token
+    });
+  } catch (error: any) {
+    console.error("Edit profile error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
   }
 });

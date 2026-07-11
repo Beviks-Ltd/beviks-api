@@ -11,4 +11,16 @@ const pool = new pg.Pool({
 });
 
 const adapter = new PrismaPg(pool);
-export const prisma = new PrismaClient({ adapter });
+const prismaRaw = new PrismaClient({ adapter });
+
+export const prisma = prismaRaw.$extends({
+  query: {
+    $allOperations({ model, operation, args, query }) {
+      const start = performance.now();
+      return query(args).finally(() => {
+        const duration = performance.now() - start;
+        console.log(`[PRISMA DB CALL] ${model || "Raw"}.${operation} executed in ${duration.toFixed(2)}ms`);
+      });
+    }
+  }
+});

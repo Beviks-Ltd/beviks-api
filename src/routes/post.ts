@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { prisma } from "../db.js";
+import { cache } from "../utils/cache.js";
 
 export const storePostRouter = Router();
 
@@ -188,6 +189,8 @@ storePostRouter.post("/", async (req: Request, res: Response): Promise<any> => {
       }
     });
 
+    cache.deletePattern("posts:list");
+
     return res.status(201).json({
       ...post,
       likesCount: 0,
@@ -237,6 +240,12 @@ storePostRouter.get("/", async (req: Request, res: Response): Promise<any> => {
     const sort = req.query.sort as string || "latest";
     const viewerId = req.query.viewerId as string | undefined;
 
+    const cacheKey = `posts:list:${sort}:${viewerId || "anon"}`;
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      return res.status(200).json(cached);
+    }
+
     const posts = await prisma.post.findMany({
       include: {
         media: {
@@ -281,6 +290,7 @@ storePostRouter.get("/", async (req: Request, res: Response): Promise<any> => {
       formattedPosts.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     }
 
+    cache.set(cacheKey, formattedPosts, 30000); // cache for 30s
     return res.status(200).json(formattedPosts);
   } catch (error: any) {
     console.error("Get posts error:", error);
@@ -492,6 +502,8 @@ storePostRouter.post("/:id/heart", async (req: Request, res: Response): Promise<
       });
     }
 
+    cache.deletePattern("posts:list");
+
     return res.status(200).json({
       message: liked ? "Heart added." : "Heart removed.",
       liked,
@@ -604,6 +616,8 @@ storePostRouter.post("/:id/comments", async (req: Request, res: Response): Promi
         });
       }
     }
+
+    cache.deletePattern("posts:list");
 
     return res.status(201).json(comment);
   } catch (error: any) {

@@ -27,6 +27,16 @@ const PORT = process.env.PORT || 3000;
 // Enable CORS
 app.use(cors());
 
+// HTTP Latency Tracing Middleware
+app.use((req: any, res: any, next: any) => {
+  const start = performance.now();
+  res.on("finish", () => {
+    const elapsed = performance.now() - start;
+    console.log(`[HTTP REQUEST] ${req.method} ${req.originalUrl} -> HTTP ${res.statusCode} (${elapsed.toFixed(2)}ms)`);
+  });
+  next();
+});
+
 // Parse JSON and urlencoded request bodies
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

@@ -222,10 +222,6 @@ storeRouter.get("/my-store", async (req: Request, res: Response): Promise<any> =
  *             type: object
  *             required:
  *               - designerId
- *               - name
- *               - description
- *               - logoUrl
- *               - coverUrl
  *             properties:
  *               designerId:
  *                 type: string
@@ -257,8 +253,8 @@ storeRouter.put("/my-store", async (req: Request, res: Response): Promise<any> =
   try {
     const { designerId, name, description, logoUrl, coverUrl } = req.body;
 
-    if (!designerId || !name || !description || !logoUrl || !coverUrl) {
-      return res.status(400).json({ error: "Missing storefront update parameters." });
+    if (!designerId) {
+      return res.status(400).json({ error: "designerId parameter is required." });
     }
 
     const store = await prisma.store.findUnique({ where: { designerId } });
@@ -266,14 +262,15 @@ storeRouter.put("/my-store", async (req: Request, res: Response): Promise<any> =
       return res.status(404).json({ error: "Store not found for this designer." });
     }
 
+    const updateData: any = {};
+    if (name !== undefined) updateData.name = name;
+    if (description !== undefined) updateData.description = description;
+    if (logoUrl !== undefined) updateData.logoUrl = logoUrl;
+    if (coverUrl !== undefined) updateData.coverUrl = coverUrl;
+
     const updatedStore = await prisma.store.update({
       where: { designerId },
-      data: {
-        name,
-        description,
-        logoUrl,
-        coverUrl
-      }
+      data: updateData
     });
 
     return res.status(200).json({

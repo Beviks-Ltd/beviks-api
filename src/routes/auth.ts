@@ -1652,3 +1652,77 @@ authRouter.put("/profile/edit", async (req: Request, res: Response): Promise<any
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
+
+/**
+ * @openapi
+ * /api/auth/change-password:
+ *   post:
+ *     summary: Change User Password
+ *     description: Verifies current password and updates to new password for non-social login user accounts.
+ *     tags:
+ *       - Authentication
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - userId
+ *               - oldPassword
+ *               - newPassword
+ *             properties:
+ *               userId:
+ *                 type: string
+ *                 format: uuid
+ *                 example: e634127c-9b76-47ee-8cd6-c67ee59d9972
+ *               oldPassword:
+ *                 type: string
+ *                 format: password
+ *                 example: OldSecurePassword123
+ *               newPassword:
+ *                 type: string
+ *                 format: password
+ *                 example: NewSecurePassword123
+ *     responses:
+ *       200:
+ *         description: Password updated successfully.
+ *       400:
+ *         description: Invalid parameters or social provider account.
+ *       404:
+ *         description: User profile not found.
+ */
+authRouter.post("/change-password", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { userId, oldPassword, newPassword } = req.body;
+
+    if (!userId || !oldPassword || !newPassword) {
+      return res.status(400).json({ error: "userId, oldPassword, and newPassword are required parameters." });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      return res.status(404).json({ error: "User profile not found." });
+    }
+
+    if (!user.passwordHash) {
+      return res.status(400).json({ error: "Social provider accounts cannot change password directly." });
+    }
+
+    const isMatch = await bcrypt.compare(oldPassword, user.passwordHash);
+    if (!isMatch) {
+      return res.status(400).json({ error: "Current password does not match our records." });
+    }
+
+    const newHash = await bcrypt.hash(newPassword, 10);
+    await prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash: newHash }
+    });
+
+    return res.status(200).json({ message: "Password updated successfully." });
+  } catch (error: any) {
+    console.error("Change password error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});

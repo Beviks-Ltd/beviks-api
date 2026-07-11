@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import { cache } from "../utils/cache.js";
 
 export const metadataRouter = Router();
 
@@ -56,6 +57,12 @@ export const metadataRouter = Router();
  *               $ref: '#/components/schemas/MetadataOptionsResponse'
  */
 metadataRouter.get("/options", (req: Request, res: Response) => {
+  const cacheKey = "metadata:options";
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return res.status(200).json(cached);
+  }
+
   const options = {
     categories: [
       "Bridal Wear",
@@ -97,5 +104,6 @@ metadataRouter.get("/options", (req: Request, res: Response) => {
     }
   };
 
+  cache.set(cacheKey, options, 300000); // Cache for 5 minutes
   return res.status(200).json(options);
 });

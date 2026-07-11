@@ -476,6 +476,22 @@ storePostRouter.post("/:id/heart", async (req: Request, res: Response): Promise<
 
     const likesCount = await prisma.postLike.count({ where: { postId: id } });
 
+    if (liked && post.designerId !== userId) {
+      const liker = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { fullName: true }
+      });
+      await prisma.notification.create({
+        data: {
+          userId: post.designerId,
+          type: "SOCIALS",
+          title: "Post Hearted",
+          message: `${liker?.fullName || "A user"} hearted your post.`,
+          referenceId: id
+        }
+      });
+    }
+
     return res.status(200).json({
       message: liked ? "Heart added." : "Heart removed.",
       liked,
@@ -559,6 +575,35 @@ storePostRouter.post("/:id/comments", async (req: Request, res: Response): Promi
         user: { select: { id: true, fullName: true } }
       }
     });
+
+    // Notify post author (if comment was left by someone else)
+    if (post.designerId !== userId) {
+      await prisma.notification.create({
+        data: {
+          userId: post.designerId,
+          type: "SOCIALS",
+          title: "New Comment on Post",
+          message: `${comment.user.fullName} commented on your post: "${content.slice(0, 30)}${content.length > 30 ? "..." : ""}"`,
+          referenceId: id
+        }
+      });
+    }
+
+    // Notify parent comment author (if this is a nested reply and author is different)
+    if (parentId) {
+      const parentComment = await prisma.comment.findUnique({ where: { id: parentId } });
+      if (parentComment && parentComment.userId !== userId) {
+        await prisma.notification.create({
+          data: {
+            userId: parentComment.userId,
+            type: "SOCIALS",
+            title: "New Reply on Comment",
+            message: `${comment.user.fullName} replied to your comment: "${content.slice(0, 30)}${content.length > 30 ? "..." : ""}"`,
+            referenceId: id
+          }
+        });
+      }
+    }
 
     return res.status(201).json(comment);
   } catch (error: any) {

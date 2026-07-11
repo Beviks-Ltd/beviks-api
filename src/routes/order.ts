@@ -455,6 +455,19 @@ orderRouter.put("/orders/:id", async (req: Request, res: Response): Promise<any>
         });
       }
 
+      // If status or progress changed, notify Customer
+      if (status || progressPercentage !== undefined) {
+        await tx.notification.create({
+          data: {
+            userId: order.customerId,
+            type: "ORDERS",
+            title: "Order Progress Updated",
+            message: `Your order status has been updated to ${status || order.status} (Progress: ${progressPercentage !== undefined ? progressPercentage : order.progressPercentage}%).`,
+            referenceId: id
+          }
+        });
+      }
+
       return updated;
     });
 
@@ -575,6 +588,18 @@ orderRouter.post("/orders/:id/adjust-price", async (req: Request, res: Response)
         }
       });
 
+      // Notify Customer
+      await tx.notification.create({
+        data: {
+          userId: order.customerId,
+          type: "ORDERS",
+          title: "Order Price Adjusted",
+          message: `Designer adjusted the order total price from ${oldTotal.toFixed(2)} to ${newTotal.toFixed(2)}. Reason: ${adjustmentReason}`,
+          amount: newTotal,
+          referenceId: id
+        }
+      });
+
       return tx.order.findUnique({
         where: { id },
         include: {
@@ -664,6 +689,17 @@ orderRouter.post("/orders/:id/adjust-schedule", async (req: Request, res: Respon
           orderId: id,
           title: "Schedule Adjusted",
           description: `Delivery date shifted from ${oldDateStr} to ${newDate.toLocaleDateString()}. Reason: ${scheduleReason}`
+        }
+      });
+
+      // Notify Customer
+      await tx.notification.create({
+        data: {
+          userId: order.customerId,
+          type: "ORDERS",
+          title: "Order Schedule Shifted",
+          message: `Designer adjusted the delivery date from ${oldDateStr} to ${newDate.toLocaleDateString()}. Reason: ${scheduleReason}`,
+          referenceId: id
         }
       });
 
@@ -856,6 +892,17 @@ orderRouter.post("/orders/:id/cancel", async (req: Request, res: Response): Prom
         }
       });
 
+      // Notify Customer
+      await tx.notification.create({
+        data: {
+          userId: order.customerId,
+          type: "ORDERS",
+          title: "Order Cancelled",
+          message: `Your order was cancelled by the designer. Reason: ${cancellationReason}`,
+          referenceId: id
+        }
+      });
+
       return orderUpdated;
     });
 
@@ -947,6 +994,18 @@ orderRouter.post("/orders/:id/refund", async (req: Request, res: Response): Prom
           orderId: id,
           title: "Refund Processed",
           description: `Refund of ${Number(refundAmount).toFixed(2)} processed. Notes: ${notes || "None"}.`
+        }
+      });
+
+      // Notify Customer
+      await tx.notification.create({
+        data: {
+          userId: order.customerId,
+          type: "ORDERS",
+          title: "Refund Processed",
+          message: `A refund of ${Number(refundAmount).toFixed(2)} has been processed for your order. Notes: ${notes || "None"}.`,
+          amount: refundAmount,
+          referenceId: id
         }
       });
 

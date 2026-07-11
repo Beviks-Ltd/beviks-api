@@ -15,6 +15,7 @@ import { quotationRouter } from "./routes/quotation.js";
 import { closetRouter } from "./routes/closet.js";
 import { orderRouter } from "./routes/order.js";
 import { chatRouter } from "./routes/chat.js";
+import { notificationRouter } from "./routes/notification.js";
 
 
 dotenv.config();
@@ -67,6 +68,7 @@ app.use("/api", quotationRouter);
 app.use("/api", closetRouter);
 app.use("/api", orderRouter);
 app.use("/api", chatRouter);
+app.use("/api", notificationRouter);
 
 // Home route to redirect to API Docs
 app.get("/", (req, res) => {

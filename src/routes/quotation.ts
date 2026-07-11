@@ -1,4 +1,4 @@
-﻿import { Router, Request, Response } from "express";
+import { Router, Request, Response } from "express";
 import { prisma } from "../db.js";
 
 export const quotationRouter = Router();
@@ -130,7 +130,10 @@ quotationRouter.post("/inquiries/:inquiryId/quotation", async (req: Request, res
 
     const inquiry = await prisma.quoteInquiry.findUnique({
       where: { id: inquiryId },
-      include: { quotation: true }
+      include: { 
+        quotation: true,
+        piece: { select: { name: true } }
+      }
     });
 
     if (!inquiry) {
@@ -152,6 +155,23 @@ quotationRouter.post("/inquiries/:inquiryId/quotation", async (req: Request, res
         terms,
         depositNotes,
         status: "PENDING"
+      }
+    });
+
+    const totalCost = Number(materialFabricCost) + 
+                      Number(tailoringCraftsmanshipCost) + 
+                      Number(embellishmentCost) + 
+                      Number(fittingCost);
+
+    // Create notification for Customer
+    await prisma.notification.create({
+      data: {
+        userId: inquiry.customerId,
+        type: "ORDERS",
+        title: "New Quotation Received",
+        message: `Designer has submitted a quote totaling ${totalCost.toFixed(2)} for your inquiry on piece '${inquiry.piece.name}'.`,
+        amount: totalCost,
+        referenceId: quotation.id
       }
     });
 
@@ -235,6 +255,18 @@ quotationRouter.post("/quotations/:id/accept", async (req: Request, res: Respons
         }
       });
 
+      // Create notification for Designer
+      await tx.notification.create({
+        data: {
+          userId: quotation.inquiry.designerId,
+          type: "ORDERS",
+          title: "Quotation Approved",
+          message: `Customer has accepted your quote totaling ${totalQuoteCost.toFixed(2)}. An active order has been generated.`,
+          amount: totalQuoteCost,
+          referenceId: order.id
+        }
+      });
+
       return { quotation: updatedQuotation, order };
     });
 
@@ -273,7 +305,8 @@ quotationRouter.post("/quotations/:id/reject", async (req: Request, res: Respons
     const id = req.params.id as string;
 
     const quotation = await prisma.quotation.findUnique({
-      where: { id }
+      where: { id },
+      include: { inquiry: true }
     });
 
     if (!quotation) {
@@ -293,6 +326,23 @@ quotationRouter.post("/quotations/:id/reject", async (req: Request, res: Respons
       await tx.quoteInquiry.update({
         where: { id: quotation.inquiryId },
         data: { status: "REJECTED" }
+      });
+
+      const totalQuoteCost = Number(quotation.materialFabricCost) + 
+                             Number(quotation.tailoringCraftsmanshipCost) + 
+                             Number(quotation.embellishmentCost) + 
+                             Number(quotation.fittingCost);
+
+      // Create notification for Designer
+      await tx.notification.create({
+        data: {
+          userId: quotation.inquiry.designerId,
+          type: "ORDERS",
+          title: "Quotation Rejected",
+          message: `Customer has rejected your quote totaling ${totalQuoteCost.toFixed(2)}.`,
+          amount: totalQuoteCost,
+          referenceId: quotation.id
+        }
       });
 
       return updated;

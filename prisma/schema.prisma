@@ -302,6 +302,9 @@ model Order {
   status             String          @default("QUOTING") // QUOTING, SOURCING, SEWING, DELIVERY
   progressPercentage Int             @default(0)
   technicalSpecs     String?
+  cancellationReason String?
+  refundAmount       Decimal?        @db.Decimal(10, 2)
+  refundStatus       String?         // PENDING, PROCESSED
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
   timeline           OrderTimeline[]

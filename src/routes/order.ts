@@ -1,4 +1,4 @@
-﻿import { Router, Request, Response } from "express";
+import { Router, Request, Response } from "express";
 import { prisma } from "../db.js";
 
 export const orderRouter = Router();
@@ -469,6 +469,501 @@ orderRouter.put("/orders/:id", async (req: Request, res: Response): Promise<any>
     });
   } catch (error: any) {
     console.error("Update order error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+/**
+ * @openapi
+ * /api/orders/{id}/adjust-price:
+ *   post:
+ *     summary: Adjust Order Itemized Pricing
+ *     description: Designer modifies the itemized costs (materials, tailoring, embellishment, fitting) for the order's linked quotation and adds a timeline event.
+ *     tags:
+ *       - Orders
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - materialFabricCost
+ *               - tailoringCraftsmanshipCost
+ *               - embellishmentCost
+ *               - fittingCost
+ *               - adjustmentReason
+ *             properties:
+ *               materialFabricCost:
+ *                 type: number
+ *                 example: 400.00
+ *               tailoringCraftsmanshipCost:
+ *                 type: number
+ *                 example: 450.00
+ *               embellishmentCost:
+ *                 type: number
+ *                 example: 120.00
+ *               fittingCost:
+ *                 type: number
+ *                 example: 60.00
+ *               adjustmentReason:
+ *                 type: string
+ *                 example: "Premium silk price increased at vendor."
+ *     responses:
+ *       200:
+ *         description: Price adjusted successfully.
+ */
+orderRouter.post("/orders/:id/adjust-price", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = req.params.id as string;
+    const { materialFabricCost, tailoringCraftsmanshipCost, embellishmentCost, fittingCost, adjustmentReason } = req.body;
+
+    if (
+      materialFabricCost === undefined ||
+      tailoringCraftsmanshipCost === undefined ||
+      embellishmentCost === undefined ||
+      fittingCost === undefined ||
+      !adjustmentReason
+    ) {
+      return res.status(400).json({ error: "All itemized costs and an adjustmentReason are required." });
+    }
+
+    const order = await prisma.order.findUnique({
+      where: { id },
+      include: { quotation: true }
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: "Order not found." });
+    }
+
+    const oldTotal = Number(order.quotation.materialFabricCost) + 
+                     Number(order.quotation.tailoringCraftsmanshipCost) + 
+                     Number(order.quotation.embellishmentCost) + 
+                     Number(order.quotation.fittingCost);
+
+    const newTotal = Number(materialFabricCost) + 
+                     Number(tailoringCraftsmanshipCost) + 
+                     Number(embellishmentCost) + 
+                     Number(fittingCost);
+
+    const updated = await prisma.$transaction(async (tx) => {
+      // Update quotation costs
+      await tx.quotation.update({
+        where: { id: order.quotationId },
+        data: {
+          materialFabricCost,
+          tailoringCraftsmanshipCost,
+          embellishmentCost,
+          fittingCost
+        }
+      });
+
+      // Log to timeline
+      await tx.orderTimeline.create({
+        data: {
+          orderId: id,
+          title: "Price Adjusted",
+          description: `Total price changed from ${oldTotal.toFixed(2)} to ${newTotal.toFixed(2)}. Reason: ${adjustmentReason}`
+        }
+      });
+
+      return tx.order.findUnique({
+        where: { id },
+        include: {
+          quotation: true,
+          timeline: { orderBy: { createdAt: "desc" } }
+        }
+      });
+    });
+
+    return res.status(200).json({
+      message: "Order pricing adjusted successfully.",
+      order: updated
+    });
+  } catch (error: any) {
+    console.error("Adjust price error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+/**
+ * @openapi
+ * /api/orders/{id}/adjust-schedule:
+ *   post:
+ *     summary: Adjust Order Delivery Schedule
+ *     description: Designer changes the expected completion date for the order's linked quotation and adds a timeline event.
+ *     tags:
+ *       - Orders
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - expectedCompletionDate
+ *               - scheduleReason
+ *             properties:
+ *               expectedCompletionDate:
+ *                 type: string
+ *                 format: date-time
+ *                 example: "2026-09-01T00:00:00.000Z"
+ *               scheduleReason:
+ *                 type: string
+ *                 example: "Shipment of custom embroidery lace was delayed."
+ *     responses:
+ *       200:
+ *         description: Schedule adjusted successfully.
+ */
+orderRouter.post("/orders/:id/adjust-schedule", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = req.params.id as string;
+    const { expectedCompletionDate, scheduleReason } = req.body;
+
+    if (!expectedCompletionDate || !scheduleReason) {
+      return res.status(400).json({ error: "expectedCompletionDate and scheduleReason are required." });
+    }
+
+    const order = await prisma.order.findUnique({
+      where: { id },
+      include: { quotation: true }
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: "Order not found." });
+    }
+
+    const oldDateStr = order.quotation.expectedCompletionDate.toLocaleDateString();
+    const newDate = new Date(expectedCompletionDate);
+
+    const updated = await prisma.$transaction(async (tx) => {
+      // Update expectedCompletionDate
+      await tx.quotation.update({
+        where: { id: order.quotationId },
+        data: { expectedCompletionDate: newDate }
+      });
+
+      // Log to timeline
+      await tx.orderTimeline.create({
+        data: {
+          orderId: id,
+          title: "Schedule Adjusted",
+          description: `Delivery date shifted from ${oldDateStr} to ${newDate.toLocaleDateString()}. Reason: ${scheduleReason}`
+        }
+      });
+
+      return tx.order.findUnique({
+        where: { id },
+        include: {
+          quotation: true,
+          timeline: { orderBy: { createdAt: "desc" } }
+        }
+      });
+    });
+
+    return res.status(200).json({
+      message: "Order completion schedule adjusted successfully.",
+      order: updated
+    });
+  } catch (error: any) {
+    console.error("Adjust schedule error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+/**
+ * @openapi
+ * /api/orders/{id}/invoice:
+ *   get:
+ *     summary: Export Order Invoice Details
+ *     description: Returns structured billing details, seller/buyer profile info, itemized quote breakdowns, payments received, and tax breakdowns.
+ *     tags:
+ *       - Orders
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: Printable invoice details JSON.
+ */
+orderRouter.get("/orders/:id/invoice", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = req.params.id as string;
+
+    const order = await prisma.order.findUnique({
+      where: { id },
+      include: {
+        customer: { select: { id: true, fullName: true, email: true, phoneNumber: true } },
+        designer: { select: { id: true, fullName: true, email: true } },
+        quotation: {
+          include: {
+            inquiry: {
+              include: {
+                piece: { select: { id: true, name: true } }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: "Order not found." });
+    }
+
+    const q = order.quotation;
+    const material = Number(q.materialFabricCost);
+    const craftsmanship = Number(q.tailoringCraftsmanshipCost);
+    const embellishment = Number(q.embellishmentCost);
+    const fitting = Number(q.fittingCost);
+    const subtotal = material + craftsmanship + embellishment + fitting;
+
+    // Standardized billing invoice calculations
+    const taxRate = 0.05; // 5% VAT
+    const taxAmount = subtotal * taxRate;
+    const grandTotal = subtotal + taxAmount;
+
+    const invoice = {
+      invoiceNumber: `INV-${order.id.slice(0, 8).toUpperCase()}`,
+      issueDate: order.createdAt,
+      dueDate: q.expectedCompletionDate,
+      orderStatus: order.status,
+      paymentStatus: order.status === "CANCELLED" ? "CANCELLED" : "DEPOSIT_PAID",
+      refundAmount: order.refundAmount ? Number(order.refundAmount) : 0,
+      refundStatus: order.refundStatus || "N/A",
+      designer: {
+        designerId: order.designer.id,
+        fullName: order.designer.fullName,
+        email: order.designer.email,
+        companyName: "Beviks Ltd Studio"
+      },
+      customer: {
+        customerId: order.customer.id,
+        fullName: order.customer.fullName,
+        email: order.customer.email,
+        phone: order.customer.phoneNumber
+      },
+      itemizedItems: [
+        { description: "Material & Fabric elements", amount: material },
+        { description: "Tailoring & Craftsmanship service", amount: craftsmanship },
+        { description: "Embellishments & Detailing work", amount: embellishment },
+        { description: "Fitting session & Adjustments", amount: fitting }
+      ],
+      pricingSummary: {
+        subtotal: Number(subtotal.toFixed(2)),
+        taxRate: "5%",
+        taxAmount: Number(taxAmount.toFixed(2)),
+        grandTotal: Number(grandTotal.toFixed(2))
+      },
+      terms: q.terms,
+      depositNotes: q.depositNotes
+    };
+
+    return res.status(200).json(invoice);
+  } catch (error: any) {
+    console.error("Export invoice error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+/**
+ * @openapi
+ * /api/orders/{id}/cancel:
+ *   post:
+ *     summary: Request Order Cancellation
+ *     description: Cancels the order, updates the state to CANCELLED, stores the reason, and adds a timeline event.
+ *     tags:
+ *       - Orders
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - cancellationReason
+ *             properties:
+ *               cancellationReason:
+ *                 type: string
+ *                 example: "Fabric supplier is out of stock of requested velvet fabric."
+ *     responses:
+ *       200:
+ *         description: Order cancelled successfully.
+ */
+orderRouter.post("/orders/:id/cancel", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = req.params.id as string;
+    const { cancellationReason } = req.body;
+
+    if (!cancellationReason) {
+      return res.status(400).json({ error: "cancellationReason is required to cancel an order." });
+    }
+
+    const order = await prisma.order.findUnique({
+      where: { id }
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: "Order not found." });
+    }
+
+    if (order.status === "CANCELLED") {
+      return res.status(400).json({ error: "Order has already been cancelled." });
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      // Update order status and reason
+      const orderUpdated = await tx.order.update({
+        where: { id },
+        data: {
+          status: "CANCELLED",
+          cancellationReason
+        }
+      });
+
+      // Log to timeline
+      await tx.orderTimeline.create({
+        data: {
+          orderId: id,
+          title: "Order Cancelled",
+          description: `Order was cancelled. Reason: ${cancellationReason}`
+        }
+      });
+
+      return orderUpdated;
+    });
+
+    const refreshed = await prisma.order.findUnique({
+      where: { id },
+      include: { timeline: { orderBy: { createdAt: "desc" } } }
+    });
+
+    return res.status(200).json({
+      message: "Order cancelled successfully.",
+      order: refreshed
+    });
+  } catch (error: any) {
+    console.error("Cancel order error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+/**
+ * @openapi
+ * /api/orders/{id}/refund:
+ *   post:
+ *     summary: Process Cancelled Order Refund
+ *     description: Processes refund details, saves refundStatus to PROCESSED, records the amount, and logs details in the timeline.
+ *     tags:
+ *       - Orders
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - refundAmount
+ *             properties:
+ *               refundAmount:
+ *                 type: number
+ *                 example: 930.00
+ *               notes:
+ *                 type: string
+ *                 example: "Full deposit refunded via Stripe transaction."
+ *     responses:
+ *       200:
+ *         description: Refund processed successfully.
+ */
+orderRouter.post("/orders/:id/refund", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = req.params.id as string;
+    const { refundAmount, notes } = req.body;
+
+    if (refundAmount === undefined) {
+      return res.status(400).json({ error: "refundAmount is required." });
+    }
+
+    const order = await prisma.order.findUnique({
+      where: { id }
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: "Order not found." });
+    }
+
+    if (order.status !== "CANCELLED") {
+      return res.status(400).json({ error: "Refunds can only be processed on cancelled orders." });
+    }
+
+    if (order.refundStatus === "PROCESSED") {
+      return res.status(400).json({ error: "Refund has already been processed for this order." });
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const orderUpdated = await tx.order.update({
+        where: { id },
+        data: {
+          refundAmount,
+          refundStatus: "PROCESSED"
+        }
+      });
+
+      await tx.orderTimeline.create({
+        data: {
+          orderId: id,
+          title: "Refund Processed",
+          description: `Refund of ${Number(refundAmount).toFixed(2)} processed. Notes: ${notes || "None"}.`
+        }
+      });
+
+      return orderUpdated;
+    });
+
+    const refreshed = await prisma.order.findUnique({
+      where: { id },
+      include: { timeline: { orderBy: { createdAt: "desc" } } }
+    });
+
+    return res.status(200).json({
+      message: "Refund processed successfully.",
+      order: refreshed
+    });
+  } catch (error: any) {
+    console.error("Process refund error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });

@@ -248,7 +248,8 @@ inquiryRouter.get("/designers/:designerId/inquiries", async (req: Request, res: 
       include: {
         customer: { select: { id: true, fullName: true, profileImageUrl: true } },
         piece: { select: { id: true, name: true, primaryImageUrl: true } },
-        inspirations: true
+        inspirations: true,
+        measurementProfile: true
       },
       orderBy: { createdAt: "desc" }
     });

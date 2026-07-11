@@ -94,7 +94,8 @@ orderRouter.get("/designers/:designerId/orders", async (req: Request, res: Respo
           include: {
             inquiry: {
               include: {
-                piece: { select: { id: true, name: true, primaryImageUrl: true } }
+                piece: { select: { id: true, name: true, primaryImageUrl: true } },
+                measurementProfile: true
               }
             }
           }

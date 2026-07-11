@@ -211,12 +211,27 @@ quotationRouter.post("/quotations/:id/accept", async (req: Request, res: Respons
         data: { status: "ACCEPTED" }
       });
 
+      const totalQuoteCost = Number(quotation.materialFabricCost) + 
+                             Number(quotation.tailoringCraftsmanshipCost) + 
+                             Number(quotation.embellishmentCost) + 
+                             Number(quotation.fittingCost);
+
       const order = await tx.order.create({
         data: {
           quotationId: id,
           designerId: quotation.inquiry.designerId,
           customerId: quotation.inquiry.customerId,
-          status: "CONFIRMED"
+          status: "QUOTING",
+          progressPercentage: 0,
+          timeline: {
+            create: {
+              title: "Quotation Approved",
+              description: `Quotation totaling ${totalQuoteCost.toFixed(2)} accepted. Status set to QUOTING. Deposit notes: ${quotation.depositNotes || "None"}.`
+            }
+          }
+        },
+        include: {
+          timeline: true
         }
       });
 

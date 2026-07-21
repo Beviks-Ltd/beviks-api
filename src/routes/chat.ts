@@ -1,5 +1,6 @@
 ﻿import { Router, Request, Response } from "express";
 import { prisma } from "../db.js";
+import { invalidateResponseCache, sendCachedJson } from "../utils/responseCache.js";
 
 export const chatRouter = Router();
 
@@ -145,6 +146,9 @@ chatRouter.post("/chats/initialize", async (req: Request, res: Response): Promis
       });
     }
 
+    invalidateResponseCache(`chats:user:${user1Id}`);
+    invalidateResponseCache(`chats:user:${user2Id}`);
+
     return res.status(200).json(room);
   } catch (error: any) {
     console.error("Initialize chat room error:", error);
@@ -175,44 +179,39 @@ chatRouter.get("/chats/user/:userId", async (req: Request, res: Response): Promi
   try {
     const userId = req.params.userId as string;
 
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (!user) {
-      return res.status(404).json({ error: "User not found." });
-    }
+    return sendCachedJson(req, res, `chats:user:${userId}`, 8000, async () => {
+      const rooms = await prisma.chatRoom.findMany({
+        where: {
+          OR: [
+            { user1Id: userId },
+            { user2Id: userId }
+          ]
+        },
+        include: {
+          user1: { select: { id: true, fullName: true, profileImageUrl: true } },
+          user2: { select: { id: true, fullName: true, profileImageUrl: true } },
+          messages: {
+            orderBy: { createdAt: "desc" },
+            take: 1
+          }
+        },
+        orderBy: { updatedAt: "desc" }
+      });
 
-    const rooms = await prisma.chatRoom.findMany({
-      where: {
-        OR: [
-          { user1Id: userId },
-          { user2Id: userId }
-        ]
-      },
-      include: {
-        user1: { select: { id: true, fullName: true, profileImageUrl: true } },
-        user2: { select: { id: true, fullName: true, profileImageUrl: true } },
-        messages: {
-          orderBy: { createdAt: "desc" },
-          take: 1
-        }
-      },
-      orderBy: { updatedAt: "desc" }
+      return rooms.map(room => {
+        const lastMessage = room.messages[0] || null;
+        return {
+          id: room.id,
+          user1Id: room.user1Id,
+          user2Id: room.user2Id,
+          createdAt: room.createdAt,
+          updatedAt: room.updatedAt,
+          user1: room.user1,
+          user2: room.user2,
+          lastMessage
+        };
+      });
     });
-
-    const formattedRooms = rooms.map(room => {
-      const lastMessage = room.messages[0] || null;
-      return {
-        id: room.id,
-        user1Id: room.user1Id,
-        user2Id: room.user2Id,
-        createdAt: room.createdAt,
-        updatedAt: room.updatedAt,
-        user1: room.user1,
-        user2: room.user2,
-        lastMessage
-      };
-    });
-
-    return res.status(200).json(formattedRooms);
   } catch (error: any) {
     console.error("Get user chat rooms error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
@@ -242,17 +241,12 @@ chatRouter.get("/chats/room/:roomId/messages", async (req: Request, res: Respons
   try {
     const roomId = req.params.roomId as string;
 
-    const room = await prisma.chatRoom.findUnique({ where: { id: roomId } });
-    if (!room) {
-      return res.status(404).json({ error: "Chat room not found." });
-    }
-
-    const messages = await prisma.chatMessage.findMany({
-      where: { roomId },
-      orderBy: { createdAt: "asc" }
+    return sendCachedJson(req, res, `chats:room:${roomId}:messages`, 5000, async () => {
+      return prisma.chatMessage.findMany({
+        where: { roomId },
+        orderBy: { createdAt: "asc" }
+      });
     });
-
-    return res.status(200).json(messages);
   } catch (error: any) {
     console.error("Get chat messages error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
@@ -294,6 +288,9 @@ chatRouter.delete("/messages/:id", async (req: Request, res: Response): Promise<
         content: "This message was deleted."
       }
     });
+
+    invalidateResponseCache(`chats:room:${msg.roomId}:messages`);
+    invalidateResponseCache("chats:user:");
 
     return res.status(200).json({ message: "Message deleted successfully.", chatMessage: updated });
   } catch (error: any) {

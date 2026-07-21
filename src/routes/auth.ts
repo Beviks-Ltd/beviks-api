@@ -2,6 +2,18 @@ import { Router, Request, Response } from "express";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { prisma } from "../db.js";
+import { sendEmail, buildBeviksEmailHtml } from "../utils/email.js";
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+
+const r2Client = new S3Client({
+  region: "auto",
+  endpoint: process.env.CLOUDFLARE_R2_ENDPOINT || "https://b2059e7f3ea3e62f3e7f050d1c4761b1.r2.cloudflarestorage.com",
+  credentials: {
+    accessKeyId: process.env.CLOUDFLARE_R2_ACCESS_KEY_ID || "mock-access-key-id",
+    secretAccessKey: process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY || "mock-secret-access-key",
+  },
+});
 
 export const authRouter = Router();
 
@@ -160,8 +172,21 @@ authRouter.post("/register/traditional", async (req: Request, res: Response): Pr
     const verificationToken = generateVerificationToken(user.email);
     const verificationLink = `http://localhost:3000/api/auth/verify-email?token=${verificationToken}`;
 
-    // Here we would normally call a mail service. We'll log it and return it in the response for simulation.
-    console.log(`[Email Sent] Verification link for ${user.email}: ${verificationLink}`);
+    // Send verification email via SendGrid helper
+    const verificationHtml = buildBeviksEmailHtml({
+      title: "Welcome to Beviks Atelier",
+      userName: user.fullName,
+      bodyText: "Thank you for joining Beviks Atelier. To activate your account and access curated Beviks collections, please verify your email address below:",
+      buttonText: "VERIFY EMAIL ADDRESS",
+      buttonUrl: verificationLink,
+    });
+
+    await sendEmail({
+      to: user.email,
+      subject: "Verify Your Beviks Atelier Account",
+      html: verificationHtml,
+      text: `Welcome to Beviks! Verify your account here: ${verificationLink}`,
+    });
 
     return res.status(201).json({
       message: "Stage 1 Registration successful. Please verify your email.",
@@ -679,6 +704,47 @@ authRouter.get("/verify-email", async (req: Request, res: Response): Promise<any
   }
 });
 
+authRouter.post("/resend-verification", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: "Missing email parameter." });
+    }
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    if (user.isEmailVerified) {
+      return res.status(400).json({ error: "Email is already verified." });
+    }
+
+    const verificationToken = generateVerificationToken(user.email);
+    const verificationLink = `http://localhost:3000/api/auth/verify-email?token=${verificationToken}`;
+
+    const verificationHtml = buildBeviksEmailHtml({
+      title: "Welcome to Beviks Atelier",
+      userName: user.fullName,
+      bodyText: "Thank you for joining Beviks Atelier. To activate your account and access curated Beviks collections, please verify your email address below:",
+      buttonText: "VERIFY EMAIL ADDRESS",
+      buttonUrl: verificationLink,
+    });
+
+    await sendEmail({
+      to: user.email,
+      subject: "Verify Your Beviks Atelier Account",
+      html: verificationHtml,
+      text: `Welcome to Beviks! Verify your account here: ${verificationLink}`,
+    });
+
+    return res.status(200).json({ message: "Verification email resent successfully." });
+  } catch (error: any) {
+    console.error("Resend verification error:", error);
+    return res.status(500).json({ error: "Internal server error." });
+  }
+});
+
 /**
  * @openapi
  * /api/auth/upload-url:
@@ -715,21 +781,36 @@ authRouter.get("/verify-email", async (req: Request, res: Response): Promise<any
  *                   type: string
  *                   description: Target public URL destination once uploaded
  */
-authRouter.get("/upload-url", (req: Request, res: Response): any => {
-  const { fileName, contentType } = req.query;
+authRouter.get("/upload-url", async (req: Request, res: Response): Promise<any> => {
+  const { fileName, contentType, folder } = req.query;
 
   if (!fileName || !contentType) {
     return res.status(400).json({ error: "fileName and contentType query parameters required." });
   }
 
-  const uniqueName = `${Date.now()}-${fileName}`;
-  const mockUploadUrl = `https://cloudflare-r2.com/beviks-api-uploads/${uniqueName}?sig=mocksignature`;
-  const publicUrl = `https://cdn.beviks-api.com/uploads/${uniqueName}`;
+  const folderPrefix = folder ? `${folder}/` : "";
+  const uniqueName = `${folderPrefix}${Date.now()}-${fileName}`;
+  const bucketName = process.env.CLOUDFLARE_R2_BUCKET || "beviksapp";
+  const publicBaseUrl = process.env.CLOUDFLARE_R2_PUBLIC_URL || "https://pub-df6ff2c404d146b68c6a3748690cc58b.r2.dev";
 
-  return res.status(200).json({
-    uploadUrl: mockUploadUrl,
-    publicUrl: publicUrl
-  });
+  try {
+    const command = new PutObjectCommand({
+      Bucket: bucketName,
+      Key: uniqueName,
+      ContentType: contentType as string,
+    });
+
+    const uploadUrl = await getSignedUrl(r2Client, command, { expiresIn: 3600 });
+    const publicUrl = `${publicBaseUrl}/${uniqueName}`;
+
+    return res.status(200).json({
+      uploadUrl,
+      publicUrl
+    });
+  } catch (error: any) {
+    console.error("Presigned URL generation error:", error);
+    return res.status(500).json({ error: "Failed to generate presigned upload URL" });
+  }
 });
 
 /**
@@ -793,6 +874,15 @@ authRouter.post("/login/traditional", async (req: Request, res: Response): Promi
     const passwordMatch = await bcrypt.compare(password, user.passwordHash);
     if (!passwordMatch) {
       return res.status(400).json({ error: "Invalid email or password" });
+    }
+
+    if (user.isDeleted) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { isDeleted: false, deletedAt: null },
+      });
+      user.isDeleted = false;
+      console.log(`[USER RESTORED] User ${user.email} logged back in. Soft-delete cancelled.`);
     }
 
     const token = generateToken(user);
@@ -880,6 +970,15 @@ authRouter.post("/login/social", async (req: Request, res: Response): Promise<an
       return res.status(404).json({ error: "Social account not found. Please register first." });
     }
 
+    if (user.isDeleted) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { isDeleted: false, deletedAt: null },
+      });
+      user.isDeleted = false;
+      console.log(`[USER RESTORED] User ${user.email} logged back in via social auth. Soft-delete cancelled.`);
+    }
+
     const token = generateToken(user);
 
     return res.status(200).json({
@@ -948,8 +1047,21 @@ authRouter.post("/forgot-password", async (req: Request, res: Response): Promise
     const resetToken = jwt.sign({ email: user.email }, JWT_SECRET, { expiresIn: "1h" });
     const resetLink = `http://localhost:3000/api/auth/reset-password?token=${resetToken}`;
 
-    // Normally we send an email, we'll log it and return it in the response for simulation
-    console.log(`[Email Sent] Password reset link for ${user.email}: ${resetLink}`);
+    // Send password reset email via SendGrid helper
+    const resetHtml = buildBeviksEmailHtml({
+      title: "Password Reset Request",
+      userName: user.fullName,
+      bodyText: "We received a request to reset your password for your Beviks Atelier account. Click the button below to choose a new password:",
+      buttonText: "RESET PASSWORD",
+      buttonUrl: resetLink,
+    });
+
+    await sendEmail({
+      to: user.email,
+      subject: "Reset Your Beviks Password",
+      html: resetHtml,
+      text: `Reset your Beviks password here: ${resetLink}`,
+    });
 
     return res.status(200).json({
       message: "Password reset link generated and email sent (simulated).",
@@ -1723,6 +1835,91 @@ authRouter.post("/change-password", async (req: Request, res: Response): Promise
     return res.status(200).json({ message: "Password updated successfully." });
   } catch (error: any) {
     console.error("Change password error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+/**
+ * @openapi
+ * /api/auth/logout:
+ *   post:
+ *     summary: Log Out User Session
+ *     tags:
+ *       - Auth
+ *     responses:
+ *       200:
+ *         description: User session logged out successfully.
+ */
+authRouter.post("/logout", async (req: Request, res: Response): Promise<any> => {
+  return res.status(200).json({ message: "Logged out successfully." });
+});
+
+/**
+ * @openapi
+ * /api/auth/request-deletion:
+ *   post:
+ *     summary: Request Account Deletion (Saves to Admin Dashboard)
+ *     tags:
+ *       - Auth
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - userId
+ *               - reason
+ *             properties:
+ *               userId:
+ *                 type: string
+ *               reason:
+ *                 type: string
+ *               details:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Account deletion request submitted and saved for Admin review.
+ */
+authRouter.post("/request-deletion", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { userId, reason, details } = req.body;
+
+    if (!userId || !reason) {
+      return res.status(400).json({ error: "userId and reason are required." });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      return res.status(404).json({ error: "User profile not found." });
+    }
+
+    const deletionRequest = await prisma.accountDeletionRequest.create({
+      data: {
+        userId,
+        reason,
+        details: details || null,
+        status: "PENDING",
+      },
+    });
+
+    // Mark user as soft deleted (scheduled for permanent erasure in 7 days)
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        isDeleted: true,
+        deletedAt: new Date(),
+      },
+    });
+
+    console.log(`[SOFT DELETE] User ${userId} (${user.email}) marked as soft-deleted. Scheduled for permanent erasure in 7 days.`);
+
+    return res.status(201).json({
+      message: "Account soft-deleted. Your data will be permanently erased in 7 days unless you log back in.",
+      deletionRequest,
+    });
+  } catch (error: any) {
+    console.error("Account deletion request error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });

@@ -213,6 +213,14 @@ collectionRouter.get("/collections/:id", async (req: Request, res: Response): Pr
     const collection = await prisma.collection.findUnique({
       where: { id },
       include: {
+        store: {
+          select: {
+            id: true,
+            designerId: true,
+            name: true,
+            logoUrl: true
+          }
+        },
         pieces: {
           include: { piece: { include: { images: true } } }
         }
@@ -223,7 +231,28 @@ collectionRouter.get("/collections/:id", async (req: Request, res: Response): Pr
       return res.status(404).json({ error: "Collection not found." });
     }
 
-    return res.status(200).json(collection);
+    const pieceIds = collection.pieces.map((item) => item.pieceId);
+    const reviews = pieceIds.length === 0 ? [] : await prisma.review.findMany({
+      where: {
+        order: {
+          quotation: {
+            inquiry: { pieceId: { in: pieceIds } }
+          }
+        }
+      },
+      select: { overall: true }
+    });
+    const averageOverall = reviews.length === 0
+      ? 5
+      : Number((reviews.reduce((sum, review) => sum + review.overall, 0) / reviews.length).toFixed(2));
+
+    return res.status(200).json({
+      ...collection,
+      reviewsSummary: {
+        averageOverall,
+        totalReviews: reviews.length
+      }
+    });
   } catch (error: any) {
     console.error("Get collection error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
@@ -344,10 +373,21 @@ collectionRouter.put("/collections/:id", async (req: Request, res: Response): Pr
 collectionRouter.delete("/collections/:id", async (req: Request, res: Response): Promise<any> => {
   try {
     const id = req.params.id as string;
+    const designerId = (req.query.designerId as string | undefined) || req.body?.designerId;
 
-    const collection = await prisma.collection.findUnique({ where: { id } });
+    if (!designerId) {
+      return res.status(400).json({ error: "designerId is required to delete a collection." });
+    }
+
+    const collection = await prisma.collection.findUnique({
+      where: { id },
+      include: { store: { select: { designerId: true } } }
+    });
     if (!collection) {
       return res.status(404).json({ error: "Collection not found." });
+    }
+    if (collection.store.designerId !== designerId) {
+      return res.status(403).json({ error: "Only the store owner can delete this collection." });
     }
 
     await prisma.collection.delete({ where: { id } });
@@ -355,6 +395,53 @@ collectionRouter.delete("/collections/:id", async (req: Request, res: Response):
     return res.status(200).json({ message: "Collection successfully deleted." });
   } catch (error: any) {
     console.error("Delete collection error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+collectionRouter.post("/collections/:id/report", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = req.params.id as string;
+    const { userId, reason, details } = req.body;
+
+    if (!userId || !reason) {
+      return res.status(400).json({ error: "userId and reason are required." });
+    }
+
+    const [collection, user] = await Promise.all([
+      prisma.collection.findUnique({ where: { id } }),
+      prisma.user.findUnique({ where: { id: userId } })
+    ]);
+
+    if (!collection) {
+      return res.status(404).json({ error: "Collection not found." });
+    }
+    if (!user) {
+      return res.status(404).json({ error: "User profile not found." });
+    }
+
+    const ticket = await prisma.supportTicket.create({
+      data: {
+        ticketNumber: `RPT-${Date.now().toString(36).toUpperCase()}`,
+        userId,
+        subject: `Reported collection: ${collection.name}`,
+        category: "REPORT_COLLECTION",
+        status: "OPEN",
+        lastMessage: `${reason}${details ? ` - ${details}` : ""}`,
+        messages: {
+          create: {
+            senderId: userId,
+            senderName: user.fullName,
+            senderRole: "USER",
+            content: `Collection ID: ${id}\nStore ID: ${collection.storeId}\nReason: ${reason}${details ? `\nDetails: ${details}` : ""}`
+          }
+        }
+      }
+    });
+
+    return res.status(201).json({ message: "Collection report submitted.", ticket });
+  } catch (error: any) {
+    console.error("Report collection error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });

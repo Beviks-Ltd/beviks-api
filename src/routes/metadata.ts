@@ -71,7 +71,7 @@ metadataRouter.get("/options", (req: Request, res: Response) => {
       "Kaftans & Abayas",
       "Cocktail & Party",
       "Pret-a-Porter (Ready-to-Wear)",
-      "Haute Couture (Bespoke/Custom)",
+      "Haute Couture (Custom Made)",
       "Festive & Ceremonial"
     ],
     heritages: {

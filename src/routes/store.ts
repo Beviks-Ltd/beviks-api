@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { prisma } from "../db.js";
+import { invalidateResponseCache, sendCachedJson, uncachedJson } from "../utils/responseCache.js";
 
 export const storeRouter = Router();
 
@@ -72,7 +73,7 @@ export const storeRouter = Router();
  *                 example: "Avenue Designs"
  *               description:
  *                 type: string
- *                 example: "High quality bespoke garments and accessories."
+ *                 example: "High quality custom garments and accessories."
  *               logoUrl:
  *                 type: string
  *                 example: "https://cdn.beviks-api.com/uploads/logo.png"
@@ -119,15 +120,16 @@ storeRouter.post("/", async (req: Request, res: Response): Promise<any> => {
       return res.status(400).json({ error: "Only accounts registered as DESIGNER can create a storefront." });
     }
 
-    // Check if store already exists
-    const existingStore = await prisma.store.findUnique({ where: { designerId } });
-    if (existingStore) {
-      return res.status(400).json({ error: "Designer already has a storefront initialized." });
-    }
-
-    // Create store (set status to PENDING_VERIFICATION and private by default)
-    const store = await prisma.store.create({
-      data: {
+    // Create or update store (upsert so existing store front details can be re-submitted cleanly)
+    const store = await prisma.store.upsert({
+      where: { designerId },
+      update: {
+        name,
+        description,
+        logoUrl,
+        coverUrl
+      },
+      create: {
         designerId,
         name,
         description,
@@ -137,8 +139,10 @@ storeRouter.post("/", async (req: Request, res: Response): Promise<any> => {
       }
     });
 
-    return res.status(201).json({
-      message: "Storefront created and submitted for manual verification. It will remain private until approved.",
+    invalidateResponseCache(`stores:designer:${designerId}`);
+
+    return res.status(200).json({
+      message: "Storefront configured and submitted for manual verification.",
       store,
       isEmailVerified: designer.isEmailVerified,
       isIdentityVerified: designer.designerProfile?.isIdentityVerified || false
@@ -183,22 +187,37 @@ storeRouter.get("/my-store", async (req: Request, res: Response): Promise<any> =
       return res.status(400).json({ error: "designerId query parameter is required." });
     }
 
-    const store = await prisma.store.findUnique({
-      where: { designerId },
-      include: {
-        _count: {
-          select: { pieces: true, collections: true }
+    return sendCachedJson(req, res, `stores:designer:${designerId}`, 15000, async () => {
+      const store = await prisma.store.findUnique({
+        where: { designerId },
+        include: {
+          pieces: {
+            include: { images: { orderBy: { order: "asc" } },
+            },
+            orderBy: { createdAt: "desc" }
+          },
+          collections: {
+            include: {
+              pieces: {
+                include: { piece: { include: { images: true } } }
+              }
+            },
+            orderBy: { createdAt: "desc" }
+          },
+          _count: {
+            select: { pieces: true, collections: true }
+          }
         }
+      });
+      if (!store) {
+        return uncachedJson(404, { error: "Store not found for this designer." });
       }
-    });
-    if (!store) {
-      return res.status(404).json({ error: "Store not found for this designer." });
-    }
 
-    return res.status(200).json({
-      ...store,
-      piecesCount: store._count.pieces,
-      collectionsCount: store._count.collections
+      return {
+        ...store,
+        piecesCount: store._count.pieces,
+        collectionsCount: store._count.collections
+      };
     });
   } catch (error: any) {
     console.error("Get my store error:", error);
@@ -272,6 +291,8 @@ storeRouter.put("/my-store", async (req: Request, res: Response): Promise<any> =
       where: { designerId },
       data: updateData
     });
+
+    invalidateResponseCache(`stores:designer:${designerId}`);
 
     return res.status(200).json({
       message: "Storefront updated successfully.",
@@ -363,6 +384,159 @@ storeRouter.get("/:id", async (req: Request, res: Response): Promise<any> => {
     });
   } catch (error: any) {
     console.error("Get public store error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+/**
+ * @openapi
+ * /api/stores/pieces:
+ *   post:
+ *     summary: Add or Save Piece (Publish or Draft)
+ *     tags:
+ *       - Stores
+ */
+storeRouter.post("/pieces", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { designerId, name, description, price, primaryImageUrl, category, heritage, status, imageGalleryUrls } = req.body;
+
+    if (!designerId || !name || !price) {
+      return res.status(400).json({ error: "Missing required fields: designerId, name, and price." });
+    }
+
+    let store = await prisma.store.findUnique({ where: { designerId } });
+    if (!store) {
+      store = await prisma.store.create({
+        data: {
+          designerId,
+          name: `${name} Store`,
+          description: "Curated Beviks atelier",
+          logoUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600",
+          coverUrl: "https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=600",
+          status: "PENDING_VERIFICATION"
+        }
+      });
+    }
+
+    const pieceStatus = status === "DRAFT" ? "DRAFT" : "PUBLISHED";
+
+    const piece = await prisma.piece.create({
+      data: {
+        storeId: store.id,
+        name,
+        description: description || "",
+        price: parseFloat(price.toString()),
+        primaryImageUrl: primaryImageUrl || "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=600",
+        category: category || "Contemporary",
+        heritage: heritage || "Yoruba",
+        status: pieceStatus,
+        images: {
+          create: (imageGalleryUrls || []).map((url: string, index: number) => ({
+            url,
+            order: index
+          }))
+        }
+      },
+      include: {
+        images: true
+      }
+    });
+
+    // If piece is published, automatically publish as a Post in the Explore feed!
+    if (pieceStatus === "PUBLISHED") {
+      const mediaUrls = [
+        primaryImageUrl || "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=600",
+        ...(imageGalleryUrls || [])
+      ].filter((u: string) => typeof u === "string" && u.trim().length > 0);
+
+      await prisma.post.create({
+        data: {
+          designerId,
+          caption: `${name}${description ? ` — ${description}` : ""}`,
+          quoteEnabled: true,
+          media: {
+            create: mediaUrls.map((url: string, index: number) => ({
+              url,
+              type: "IMAGE",
+              order: index
+            }))
+          }
+        }
+      });
+    }
+
+    invalidateResponseCache(`stores:designer:${designerId}`);
+    invalidateResponseCache("posts:list");
+
+    return res.status(201).json({
+      message: pieceStatus === "DRAFT" ? "Piece saved as draft successfully!" : "Piece published to portfolio and Explore feed!",
+      piece
+    });
+  } catch (error: any) {
+    console.error("Create piece error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+/**
+ * @openapi
+ * /api/stores/collections:
+ *   post:
+ *     summary: Create Collection with Multi-Selected Pieces
+ *     tags:
+ *       - Stores
+ */
+storeRouter.post("/collections", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { designerId, name, story, imageUrl, pieceIds } = req.body;
+
+    if (!designerId || !name) {
+      return res.status(400).json({ error: "Missing required fields: designerId and name." });
+    }
+
+    let store = await prisma.store.findUnique({ where: { designerId } });
+    if (!store) {
+      store = await prisma.store.create({
+        data: {
+          designerId,
+          name: `${name} Store`,
+          description: "Curated Beviks atelier",
+          logoUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600",
+          coverUrl: "https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=600",
+          status: "PENDING_VERIFICATION"
+        }
+      });
+    }
+
+    const collection = await prisma.collection.create({
+      data: {
+        storeId: store.id,
+        name,
+        story: story || "",
+        imageUrl: imageUrl || "https://images.unsplash.com/photo-1509631179647-0177331693ae?w=600",
+        pieces: {
+          create: (pieceIds || []).map((pieceId: string) => ({
+            pieceId
+          }))
+        }
+      },
+      include: {
+        pieces: {
+          include: {
+            piece: true
+          }
+        }
+      }
+    });
+
+    invalidateResponseCache(`stores:designer:${designerId}`);
+
+    return res.status(201).json({
+      message: "Collection created successfully!",
+      collection
+    });
+  } catch (error: any) {
+    console.error("Create collection error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });

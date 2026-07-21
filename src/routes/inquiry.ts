@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { prisma } from "../db.js";
+import { invalidateResponseCache, sendCachedJson, uncachedJson } from "../utils/responseCache.js";
 
 export const inquiryRouter = Router();
 
@@ -145,6 +146,9 @@ inquiryRouter.post("/inquiries", async (req: Request, res: Response): Promise<an
   try {
     const {
       pieceId,
+      designerId,
+      pieceName,
+      pieceImageUrl,
       customerId,
       measurementProfileId,
       specialInstructions,
@@ -154,14 +158,37 @@ inquiryRouter.post("/inquiries", async (req: Request, res: Response): Promise<an
       inspirationImages
     } = req.body;
 
-    if (!pieceId || !customerId || budget === undefined) {
-      return res.status(400).json({ error: "pieceId, customerId, and budget are required parameters." });
+    if ((!pieceId && !designerId) || !customerId || budget === undefined) {
+      return res.status(400).json({ error: "pieceId or designerId, customerId, and budget are required parameters." });
     }
 
-    const piece = await prisma.piece.findUnique({
-      where: { id: pieceId },
-      include: { store: true }
-    });
+    let piece = pieceId
+      ? await prisma.piece.findUnique({
+          where: { id: pieceId },
+          include: { store: true }
+        })
+      : null;
+
+    if (!piece && designerId) {
+      const store = await prisma.store.findUnique({ where: { designerId } });
+      if (!store) {
+        return res.status(404).json({ error: "Designer store not found." });
+      }
+
+      piece = await prisma.piece.create({
+        data: {
+          storeId: store.id,
+          name: pieceName || "Custom Beviks Request",
+          description: specialInstructions || "Custom quote request from a client.",
+          price: budget,
+          primaryImageUrl: pieceImageUrl || "https://images.unsplash.com/photo-1595777457583-95e059d581b8?w=600&auto=format&fit=crop&q=80",
+          category: "CUSTOM",
+          heritage: "Custom",
+          status: "DRAFT"
+        },
+        include: { store: true }
+      });
+    }
 
     if (!piece) {
       return res.status(404).json({ error: "Piece not found." });
@@ -181,7 +208,7 @@ inquiryRouter.post("/inquiries", async (req: Request, res: Response): Promise<an
 
     const inquiry = await prisma.quoteInquiry.create({
       data: {
-        pieceId,
+        pieceId: piece.id,
         designerId: piece.store.designerId,
         customerId,
         measurementProfileId: measurementProfileId || null,
@@ -201,6 +228,8 @@ inquiryRouter.post("/inquiries", async (req: Request, res: Response): Promise<an
         piece: { select: { id: true, name: true, primaryImageUrl: true } }
       }
     });
+
+    invalidateResponseCache("inquiries:");
 
     return res.status(201).json(inquiry);
   } catch (error: any) {
@@ -238,23 +267,18 @@ inquiryRouter.get("/designers/:designerId/inquiries", async (req: Request, res: 
   try {
     const designerId = req.params.designerId as string;
 
-    const designer = await prisma.user.findUnique({ where: { id: designerId } });
-    if (!designer) {
-      return res.status(404).json({ error: "Designer not found." });
-    }
-
-    const inquiries = await prisma.quoteInquiry.findMany({
-      where: { designerId, status: "PENDING" },
-      include: {
-        customer: { select: { id: true, fullName: true, profileImageUrl: true } },
-        piece: { select: { id: true, name: true, primaryImageUrl: true } },
-        inspirations: true,
-        measurementProfile: true
-      },
-      orderBy: { createdAt: "desc" }
+    return sendCachedJson(req, res, `inquiries:designer:${designerId}:pending`, 8000, async () => {
+      return prisma.quoteInquiry.findMany({
+        where: { designerId, status: "PENDING" },
+        include: {
+          customer: { select: { id: true, fullName: true, profileImageUrl: true } },
+          piece: { select: { id: true, name: true, primaryImageUrl: true } },
+          inspirations: true,
+          measurementProfile: true
+        },
+        orderBy: { createdAt: "desc" }
+      });
     });
-
-    return res.status(200).json(inquiries);
   } catch (error: any) {
     console.error("Get designer inquiries error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
@@ -290,23 +314,62 @@ inquiryRouter.get("/inquiries/:id", async (req: Request, res: Response): Promise
   try {
     const id = req.params.id as string;
 
+    return sendCachedJson(req, res, `inquiries:detail:${id}`, 8000, async () => {
+      const inquiry = await prisma.quoteInquiry.findUnique({
+        where: { id },
+        include: {
+          customer: { select: { id: true, fullName: true, profileImageUrl: true } },
+          piece: { select: { id: true, name: true, primaryImageUrl: true } },
+          inspirations: true,
+          measurementProfile: true
+        }
+      });
+
+      if (!inquiry) {
+        return uncachedJson(404, { error: "Inquiry not found." });
+      }
+
+      return inquiry;
+    });
+  } catch (error: any) {
+    console.error("Get inquiry details error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+inquiryRouter.delete("/inquiries/:id", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = req.params.id as string;
+    const designerId = (req.query.designerId as string | undefined) || req.body?.designerId;
+
+    if (!designerId) {
+      return res.status(400).json({ error: "designerId is required to delete an inquiry." });
+    }
+
     const inquiry = await prisma.quoteInquiry.findUnique({
       where: { id },
-      include: {
-        customer: { select: { id: true, fullName: true, profileImageUrl: true } },
-        piece: { select: { id: true, name: true, primaryImageUrl: true } },
-        inspirations: true,
-        measurementProfile: true
-      }
+      include: { quotation: true }
     });
 
     if (!inquiry) {
       return res.status(404).json({ error: "Inquiry not found." });
     }
 
-    return res.status(200).json(inquiry);
+    if (inquiry.designerId !== designerId) {
+      return res.status(403).json({ error: "Only the receiving designer can delete this inquiry." });
+    }
+
+    if (inquiry.quotation) {
+      return res.status(400).json({ error: "Quoted inquiries cannot be deleted. Manage the quotation instead." });
+    }
+
+    await prisma.quoteInquiry.delete({ where: { id } });
+
+    invalidateResponseCache("inquiries:");
+
+    return res.status(200).json({ message: "Inquiry deleted successfully." });
   } catch (error: any) {
-    console.error("Get inquiry details error:", error);
+    console.error("Delete inquiry error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });

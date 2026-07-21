@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { prisma } from "../db.js";
+import { invalidateResponseCache, sendCachedJson, uncachedJson } from "../utils/responseCache.js";
 
 export const orderRouter = Router();
 
@@ -137,52 +138,47 @@ orderRouter.get("/designers/:designerId/orders/active", async (req: Request, res
   try {
     const designerId = req.params.designerId as string;
 
-    const designer = await prisma.user.findUnique({ where: { id: designerId } });
-    if (!designer) {
-      return res.status(404).json({ error: "Designer account not found." });
-    }
-
-    const orders = await prisma.order.findMany({
-      where: {
-        designerId,
-        status: { in: ["QUOTING", "SOURCING", "SEWING"] }
-      },
-      include: {
-        customer: { select: { id: true, fullName: true, profileImageUrl: true } },
-        quotation: {
-          include: {
-            inquiry: {
-              include: {
-                piece: { select: { id: true, name: true, primaryImageUrl: true } }
+    return sendCachedJson(req, res, `orders:designer:${designerId}:active`, 8000, async () => {
+      const orders = await prisma.order.findMany({
+        where: {
+          designerId,
+          status: { in: ["QUOTING", "SOURCING", "SEWING"] }
+        },
+        include: {
+          customer: { select: { id: true, fullName: true, profileImageUrl: true } },
+          quotation: {
+            include: {
+              inquiry: {
+                include: {
+                  piece: { select: { id: true, name: true, primaryImageUrl: true } }
+                }
               }
             }
           }
-        }
-      },
-      orderBy: { createdAt: "desc" }
-    });
+        },
+        orderBy: { createdAt: "desc" }
+      });
 
-    const formatted = orders.map(order => {
-      const q = order.quotation;
-      const totalAmount = Number(q.materialFabricCost) + 
-                          Number(q.tailoringCraftsmanshipCost) + 
-                          Number(q.embellishmentCost) + 
-                          Number(q.fittingCost);
-      return {
-        orderId: order.id,
-        status: order.status,
-        progressPercentage: order.progressPercentage,
-        acceptedDate: order.createdAt,
-        estimatedDelivery: q.expectedCompletionDate,
-        totalQuoteAmount: totalAmount,
-        pieceName: q.inquiry.piece.name,
-        pieceImageUrl: q.inquiry.piece.primaryImageUrl,
-        customerName: order.customer.fullName,
-        customerAvatarUrl: order.customer.profileImageUrl
-      };
+      return orders.map(order => {
+        const q = order.quotation;
+        const totalAmount = Number(q.materialFabricCost) +
+                            Number(q.tailoringCraftsmanshipCost) +
+                            Number(q.embellishmentCost) +
+                            Number(q.fittingCost);
+        return {
+          orderId: order.id,
+          status: order.status,
+          progressPercentage: order.progressPercentage,
+          acceptedDate: order.createdAt,
+          estimatedDelivery: q.expectedCompletionDate,
+          totalQuoteAmount: totalAmount,
+          pieceName: q.inquiry.piece.name,
+          pieceImageUrl: q.inquiry.piece.primaryImageUrl,
+          customerName: order.customer.fullName,
+          customerAvatarUrl: order.customer.profileImageUrl
+        };
+      });
     });
-
-    return res.status(200).json(formatted);
   } catch (error: any) {
     console.error("Get active orders error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
@@ -212,52 +208,47 @@ orderRouter.get("/designers/:designerId/orders/completed", async (req: Request, 
   try {
     const designerId = req.params.designerId as string;
 
-    const designer = await prisma.user.findUnique({ where: { id: designerId } });
-    if (!designer) {
-      return res.status(404).json({ error: "Designer account not found." });
-    }
-
-    const orders = await prisma.order.findMany({
-      where: {
-        designerId,
-        status: "DELIVERY"
-      },
-      include: {
-        customer: { select: { id: true, fullName: true, profileImageUrl: true } },
-        quotation: {
-          include: {
-            inquiry: {
-              include: {
-                piece: { select: { id: true, name: true, primaryImageUrl: true } }
+    return sendCachedJson(req, res, `orders:designer:${designerId}:completed`, 15000, async () => {
+      const orders = await prisma.order.findMany({
+        where: {
+          designerId,
+          status: "DELIVERY"
+        },
+        include: {
+          customer: { select: { id: true, fullName: true, profileImageUrl: true } },
+          quotation: {
+            include: {
+              inquiry: {
+                include: {
+                  piece: { select: { id: true, name: true, primaryImageUrl: true } }
+                }
               }
             }
           }
-        }
-      },
-      orderBy: { createdAt: "desc" }
-    });
+        },
+        orderBy: { createdAt: "desc" }
+      });
 
-    const formatted = orders.map(order => {
-      const q = order.quotation;
-      const totalAmount = Number(q.materialFabricCost) + 
-                          Number(q.tailoringCraftsmanshipCost) + 
-                          Number(q.embellishmentCost) + 
-                          Number(q.fittingCost);
-      return {
-        orderId: order.id,
-        status: order.status,
-        progressPercentage: order.progressPercentage,
-        acceptedDate: order.createdAt,
-        estimatedDelivery: q.expectedCompletionDate,
-        totalQuoteAmount: totalAmount,
-        pieceName: q.inquiry.piece.name,
-        pieceImageUrl: q.inquiry.piece.primaryImageUrl,
-        customerName: order.customer.fullName,
-        customerAvatarUrl: order.customer.profileImageUrl
-      };
+      return orders.map(order => {
+        const q = order.quotation;
+        const totalAmount = Number(q.materialFabricCost) +
+                            Number(q.tailoringCraftsmanshipCost) +
+                            Number(q.embellishmentCost) +
+                            Number(q.fittingCost);
+        return {
+          orderId: order.id,
+          status: order.status,
+          progressPercentage: order.progressPercentage,
+          acceptedDate: order.createdAt,
+          estimatedDelivery: q.expectedCompletionDate,
+          totalQuoteAmount: totalAmount,
+          pieceName: q.inquiry.piece.name,
+          pieceImageUrl: q.inquiry.piece.primaryImageUrl,
+          customerName: order.customer.fullName,
+          customerAvatarUrl: order.customer.profileImageUrl
+        };
+      });
     });
-
-    return res.status(200).json(formatted);
   } catch (error: any) {
     console.error("Get completed orders error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
@@ -291,93 +282,92 @@ orderRouter.get("/orders/:id", async (req: Request, res: Response): Promise<any>
   try {
     const id = req.params.id as string;
 
-    const order = await prisma.order.findUnique({
-      where: { id },
-      include: {
-        customer: true,
-        timeline: { orderBy: { createdAt: "desc" } },
-        designer: {
-          select: {
-            id: true,
-            fullName: true,
-            profileImageUrl: true,
-            email: true,
-            store: {
-              select: {
-                id: true,
-                name: true,
-                logoUrl: true,
-                description: true
+    return sendCachedJson(req, res, `orders:detail:${id}`, 8000, async () => {
+      const order = await prisma.order.findUnique({
+        where: { id },
+        include: {
+          customer: true,
+          timeline: { orderBy: { createdAt: "desc" } },
+          designer: {
+            select: {
+              id: true,
+              fullName: true,
+              profileImageUrl: true,
+              email: true,
+              store: {
+                select: {
+                  id: true,
+                  name: true,
+                  logoUrl: true,
+                  description: true
+                }
+              }
+            }
+          },
+          quotation: {
+            include: {
+              inquiry: {
+                include: {
+                  piece: { select: { id: true, name: true, primaryImageUrl: true } },
+                  measurementProfile: true
+                }
               }
             }
           }
+        }
+      });
+
+      if (!order) {
+        return uncachedJson(404, { error: "Order not found." });
+      }
+
+      const q = order.quotation;
+      const totalAmount = Number(q.materialFabricCost) +
+                          Number(q.tailoringCraftsmanshipCost) +
+                          Number(q.embellishmentCost) +
+                          Number(q.fittingCost);
+
+      return {
+        id: order.id,
+        quotationId: order.quotationId,
+        designerId: order.designerId,
+        customerId: order.customerId,
+        status: order.status,
+        progressPercentage: order.progressPercentage,
+        technicalSpecs: order.technicalSpecs,
+        cancellationReason: order.cancellationReason,
+        refundAmount: order.refundAmount ? Number(order.refundAmount) : null,
+        refundStatus: order.refundStatus,
+        createdAt: order.createdAt,
+        updatedAt: order.updatedAt,
+        designer: order.designer,
+        customer: {
+          id: order.customer.id,
+          fullName: order.customer.fullName,
+          email: order.customer.email,
+          phoneNumber: order.customer.phoneNumber,
+          gender: order.customer.gender,
+          dateOfBirth: order.customer.dateOfBirth,
+          profileImageUrl: order.customer.profileImageUrl
         },
         quotation: {
-          include: {
-            inquiry: {
-              include: {
-                piece: { select: { id: true, name: true, primaryImageUrl: true } },
-                measurementProfile: true
-              }
-            }
+          id: q.id,
+          materialFabricCost: Number(q.materialFabricCost),
+          tailoringCraftsmanshipCost: Number(q.tailoringCraftsmanshipCost),
+          embellishmentCost: Number(q.embellishmentCost),
+          fittingCost: Number(q.fittingCost),
+          totalQuoteAmount: totalAmount,
+          expectedCompletionDate: q.expectedCompletionDate,
+          terms: q.terms,
+          depositNotes: q.depositNotes,
+          inquiry: {
+            id: q.inquiry.id,
+            piece: q.inquiry.piece,
+            measurementProfile: q.inquiry.measurementProfile
           }
         }
-      }
+      };
     });
-
-    if (!order) {
-      return res.status(404).json({ error: "Order not found." });
-    }
-
-    const q = order.quotation;
-    const totalAmount = Number(q.materialFabricCost) + 
-                        Number(q.tailoringCraftsmanshipCost) + 
-                        Number(q.embellishmentCost) + 
-                        Number(q.fittingCost);
-
-    const detailed = {
-      id: order.id,
-      quotationId: order.quotationId,
-      designerId: order.designerId,
-      customerId: order.customerId,
-      status: order.status,
-      progressPercentage: order.progressPercentage,
-      technicalSpecs: order.technicalSpecs,
-      cancellationReason: order.cancellationReason,
-      refundAmount: order.refundAmount ? Number(order.refundAmount) : null,
-      refundStatus: order.refundStatus,
-      createdAt: order.createdAt,
-      updatedAt: order.updatedAt,
-      designer: order.designer,
-      customer: {
-        id: order.customer.id,
-        fullName: order.customer.fullName,
-        email: order.customer.email,
-        phoneNumber: order.customer.phoneNumber,
-        gender: order.customer.gender,
-        dateOfBirth: order.customer.dateOfBirth,
-        profileImageUrl: order.customer.profileImageUrl
-      },
-      quotation: {
-        id: q.id,
-        materialFabricCost: Number(q.materialFabricCost),
-        tailoringCraftsmanshipCost: Number(q.tailoringCraftsmanshipCost),
-        embellishmentCost: Number(q.embellishmentCost),
-        fittingCost: Number(q.fittingCost),
-        totalQuoteAmount: totalAmount,
-        expectedCompletionDate: q.expectedCompletionDate,
-        terms: q.terms,
-        depositNotes: q.depositNotes,
-        inquiry: {
-          id: q.inquiry.id,
-          piece: q.inquiry.piece,
-          measurementProfile: q.inquiry.measurementProfile
-        }
-      },
-      timeline: order.timeline
-    };
-
-    return res.status(200).json(detailed);
   } catch (error: any) {
     console.error("Get order details error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
@@ -407,61 +397,56 @@ orderRouter.get("/users/:userId/orders", async (req: Request, res: Response): Pr
   try {
     const userId = req.params.userId as string;
 
-    const customer = await prisma.user.findUnique({ where: { id: userId } });
-    if (!customer) {
-      return res.status(404).json({ error: "Customer account not found." });
-    }
-
-    const orders = await prisma.order.findMany({
-      where: { customerId: userId },
-      include: {
-        designer: {
-          select: {
-            id: true,
-            fullName: true,
-            profileImageUrl: true,
-            store: {
-              select: {
-                id: true,
-                name: true,
-                logoUrl: true
+    return sendCachedJson(req, res, `orders:customer:${userId}`, 8000, async () => {
+      const orders = await prisma.order.findMany({
+        where: { customerId: userId },
+        include: {
+          designer: {
+            select: {
+              id: true,
+              fullName: true,
+              profileImageUrl: true,
+              store: {
+                select: {
+                  id: true,
+                  name: true,
+                  logoUrl: true
+                }
+              }
+            }
+          },
+          quotation: {
+            include: {
+              inquiry: {
+                include: {
+                  piece: { select: { id: true, name: true, primaryImageUrl: true } }
+                }
               }
             }
           }
         },
-        quotation: {
-          include: {
-            inquiry: {
-              include: {
-                piece: { select: { id: true, name: true, primaryImageUrl: true } }
-              }
-            }
-          }
-        }
-      },
-      orderBy: { createdAt: "desc" }
-    });
+        orderBy: { createdAt: "desc" }
+      });
 
-    const formatted = orders.map(order => {
-      const q = order.quotation;
-      const totalAmount = Number(q.materialFabricCost) + 
-                          Number(q.tailoringCraftsmanshipCost) + 
-                          Number(q.embellishmentCost) + 
-                          Number(q.fittingCost);
-      return {
-        orderId: order.id,
-        status: order.status,
-        progressPercentage: order.progressPercentage,
-        acceptedDate: order.createdAt,
-        estimatedDelivery: q.expectedCompletionDate,
-        totalQuoteAmount: totalAmount,
-        pieceName: q.inquiry.piece.name,
-        pieceImageUrl: q.inquiry.piece.primaryImageUrl,
-        designer: order.designer
-      };
+      return orders.map(order => {
+        const q = order.quotation;
+        const totalAmount = Number(q.materialFabricCost) +
+                            Number(q.tailoringCraftsmanshipCost) +
+                            Number(q.embellishmentCost) +
+                            Number(q.fittingCost);
+        return {
+          orderId: order.id,
+          status: order.status,
+          progressPercentage: order.progressPercentage,
+          acceptedDate: order.createdAt,
+          estimatedDelivery: q.expectedCompletionDate,
+          totalQuoteAmount: totalAmount,
+          pieceName: q.inquiry.piece.name,
+          pieceImageUrl: q.inquiry.piece.primaryImageUrl,
+          designer: order.designer
+        };
+      });
     });
-
-    return res.status(200).json(formatted);
   } catch (error: any) {
     console.error("Get customer orders error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
@@ -579,6 +564,9 @@ orderRouter.put("/orders/:id", async (req: Request, res: Response): Promise<any>
       where: { id },
       include: { timeline: { orderBy: { createdAt: "desc" } } }
     });
+
+    invalidateResponseCache("orders:");
+    invalidateResponseCache(`notifications:user:${order.customerId}`);
 
     return res.status(200).json({
       message: "Order updated successfully.",
@@ -713,6 +701,9 @@ orderRouter.post("/orders/:id/adjust-price", async (req: Request, res: Response)
       });
     });
 
+    invalidateResponseCache("orders:");
+    invalidateResponseCache(`notifications:user:${order.customerId}`);
+
     return res.status(200).json({
       message: "Order pricing adjusted successfully.",
       order: updated
@@ -815,6 +806,9 @@ orderRouter.post("/orders/:id/adjust-schedule", async (req: Request, res: Respon
         }
       });
     });
+
+    invalidateResponseCache("orders:");
+    invalidateResponseCache(`notifications:user:${order.customerId}`);
 
     return res.status(200).json({
       message: "Order completion schedule adjusted successfully.",
@@ -1015,6 +1009,9 @@ orderRouter.post("/orders/:id/cancel", async (req: Request, res: Response): Prom
       include: { timeline: { orderBy: { createdAt: "desc" } } }
     });
 
+    invalidateResponseCache("orders:");
+    invalidateResponseCache(`notifications:user:${order.customerId}`);
+
     return res.status(200).json({
       message: "Order cancelled successfully.",
       order: refreshed
@@ -1120,6 +1117,9 @@ orderRouter.post("/orders/:id/refund", async (req: Request, res: Response): Prom
       where: { id },
       include: { timeline: { orderBy: { createdAt: "desc" } } }
     });
+
+    invalidateResponseCache("orders:");
+    invalidateResponseCache(`notifications:user:${order.customerId}`);
 
     return res.status(200).json({
       message: "Refund processed successfully.",

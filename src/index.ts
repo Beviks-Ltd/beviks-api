@@ -2,6 +2,11 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 import { app } from "./server.js";
 import { prisma } from "./db.js";
+import { startWeeklyAccountCleanupCron } from "./utils/cron.js";
+import { invalidateResponseCache } from "./utils/responseCache.js";
+
+// Initialize Weekly Account Cleanup Cron Job
+startWeeklyAccountCleanupCron();
 
 const PORT = process.env.PORT || 3000;
 const server = createServer(app);
@@ -14,8 +19,17 @@ const io = new Server(server, {
   }
 });
 
+const onlineUsers = new Map<string, string>();
+
 io.on("connection", (socket) => {
   console.log(`[Socket Connected] Client ID: ${socket.id}`);
+
+  socket.on("user_online", (data: { userId: string }) => {
+    if (!data?.userId) return;
+    onlineUsers.set(data.userId, socket.id);
+    io.emit("online_users", Array.from(onlineUsers.keys()));
+    console.log(`[Socket Online] User ${data.userId} is online`);
+  });
 
   // Event: Join active room
   socket.on("join_room", (roomId: string) => {
@@ -28,7 +42,7 @@ io.on("connection", (socket) => {
     try {
       const { roomId, senderId, content, mediaUrl } = data;
 
-      if (!roomId || !senderId || !content) {
+      if (!roomId || !senderId || (!content && !mediaUrl)) {
         console.error("[Socket Message Error] Missing message parameters.");
         return;
       }
@@ -47,10 +61,15 @@ io.on("connection", (socket) => {
       });
 
       // Update room timestamp for sorting lists
-      await prisma.chatRoom.update({
+      const room = await prisma.chatRoom.update({
         where: { id: roomId },
-        data: { updatedAt: new Date() }
+        data: { updatedAt: new Date() },
+        select: { user1Id: true, user2Id: true }
       });
+
+      invalidateResponseCache(`chats:room:${roomId}:messages`);
+      invalidateResponseCache(`chats:user:${room.user1Id}`);
+      invalidateResponseCache(`chats:user:${room.user2Id}`);
 
       // Broadcast to room
       io.to(roomId).emit("receive_message", message);
@@ -77,6 +96,9 @@ io.on("connection", (socket) => {
           content: "This message was deleted."
         }
       });
+
+      invalidateResponseCache(`chats:room:${roomId}:messages`);
+      invalidateResponseCache("chats:user:");
 
       // Broadcast deletion
       io.to(roomId).emit("message_deleted", updated);
@@ -115,14 +137,21 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
+    for (const [userId, socketId] of onlineUsers.entries()) {
+      if (socketId === socket.id) {
+        onlineUsers.delete(userId);
+        break;
+      }
+    }
+    io.emit("online_users", Array.from(onlineUsers.keys()));
     console.log(`[Socket Disconnected] Client ID: ${socket.id}`);
   });
 });
 
 // Boot HTTP Server
-server.listen(PORT, () => {
+server.listen(Number(PORT), "0.0.0.0", () => {
   console.log(`===================================================`);
-  console.log(`🚀 Beviks API server running at http://localhost:${PORT}`);
+  console.log(`🚀 Beviks API server running at http://0.0.0.0:${PORT}`);
   console.log(`📝 Swagger Docs available at http://localhost:${PORT}/api-docs`);
   console.log(`===================================================`);
 });

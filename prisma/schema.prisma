@@ -24,52 +24,104 @@ enum StoreStatus {
 }
 
 model User {
-  id               String           @id @default(uuid())
-  email            String           @unique
-  passwordHash     String?          // Nullable for Google/Apple social registrations
-  fullName         String
-  phoneNumber      String?          // Nullable during Step 1 of registration
-  gender           Gender?          // Nullable during Step 1 of registration
-  dateOfBirth      DateTime?        // Nullable during Step 1 of registration
-  role             UserRole
-  isEmailVerified  Boolean          @default(false)
-  socialProvider   String?          // "GOOGLE" or "APPLE"
-  socialId         String?          // Unique ID from provider
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-  address          String?
-  bio              String?
-  
-  designerProfile  DesignerProfile?
-  store            Store?
-  posts              Post[]
-  postLikes          PostLike[]
-  comments           Comment[]
-  commentLikes       CommentLike[]
-  profileImageUrl    String?
+  id              String    @id @default(uuid())
+  email           String    @unique
+  passwordHash    String? // Nullable for Google/Apple social registrations
+  fullName        String
+  phoneNumber     String? // Nullable during Step 1 of registration
+  gender          Gender? // Nullable during Step 1 of registration
+  dateOfBirth     DateTime? // Nullable during Step 1 of registration
+  role            UserRole
+  isEmailVerified Boolean   @default(false)
+  socialProvider  String? // "GOOGLE" or "APPLE"
+  socialId        String? // Unique ID from provider
+  isDeleted       Boolean   @default(false)
+  deletedAt       DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  address         String?
+  bio             String?
+  expoPushToken   String?
+
+  designerProfile     DesignerProfile?
+  store               Store?
+  posts               Post[]
+  postLikes           PostLike[]
+  comments            Comment[]
+  commentLikes        CommentLike[]
+  profileImageUrl     String?
   measurementProfiles MeasurementProfile[]
-  customerInquiries  QuoteInquiry[] @relation("CustomerInquiries")
-  designerInquiries  QuoteInquiry[] @relation("DesignerInquiries")
-  designerOrders     Order[] @relation("DesignerOrders")
-  customerOrders     Order[] @relation("CustomerOrders")
-  chatRooms1         ChatRoom[] @relation("ChatRoomUser1")
-  chatRooms2         ChatRoom[] @relation("ChatRoomUser2")
-  sentMessages       ChatMessage[]
-  notifications      Notification[]
-  designerReviews    Review[] @relation("DesignerReviews")
-  customerReviews    Review[] @relation("CustomerReviews")
+  customerInquiries   QuoteInquiry[]           @relation("CustomerInquiries")
+  designerInquiries   QuoteInquiry[]           @relation("DesignerInquiries")
+  designerOrders      Order[]                  @relation("DesignerOrders")
+  customerOrders      Order[]                  @relation("CustomerOrders")
+  chatRooms1          ChatRoom[]               @relation("ChatRoomUser1")
+  chatRooms2          ChatRoom[]               @relation("ChatRoomUser2")
+  sentMessages        ChatMessage[]
+  notifications       Notification[]
+  designerReviews     Review[]                 @relation("DesignerReviews")
+  customerReviews     Review[]                 @relation("CustomerReviews")
+  deletionRequests    AccountDeletionRequest[]
+  supportTickets      SupportTicket[]
+  savedPosts          SavedPost[]
+
+  @@index([role])
+  @@index([isDeleted, createdAt])
+  @@index([isDeleted, deletedAt])
+}
+
+model SupportTicket {
+  id           String           @id @default(uuid())
+  ticketNumber String           @unique // e.g. TICK-8901
+  userId       String
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject      String
+  category     String           @default("GENERAL")
+  status       String           @default("OPEN") // OPEN, IN_PROGRESS, RESOLVED
+  lastMessage  String?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  messages     SupportMessage[]
+
+  @@index([userId, updatedAt])
+  @@index([status, updatedAt])
+}
+
+model SupportMessage {
+  id         String        @id @default(uuid())
+  ticketId   String
+  ticket     SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  senderId   String
+  senderName String
+  senderRole String // "USER" or "CONCIERGE"
+  content    String
+  mediaUrl   String?
+  createdAt  DateTime      @default(now())
+
+  @@index([ticketId, createdAt])
+}
+
+model AccountDeletionRequest {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reason    String
+  details   String?
+  status    String   @default("PENDING") // PENDING, PROCESSED, REJECTED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model DesignerProfile {
-  id                String   @id @default(uuid())
-  userId            String   @unique
-  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  identityType      String?  // e.g. "PASSPORT", "DRIVERS_LICENSE"
-  identityFrontUrl  String?  // Cloudflare upload image link
-  identityBackUrl   String?  // Cloudflare upload image link
-  isIdentityVerified Boolean @default(false)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id                 String   @id @default(uuid())
+  userId             String   @unique
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  identityType       String? // e.g. "PASSPORT", "DRIVERS_LICENSE"
+  identityFrontUrl   String? // Cloudflare upload image link
+  identityBackUrl    String? // Cloudflare upload image link
+  isIdentityVerified Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 }
 
 model Store {
@@ -91,17 +143,26 @@ model Store {
 }
 
 model Post {
-  id            String         @id @default(uuid())
-  designerId    String
-  designer      User           @relation(fields: [designerId], references: [id], onDelete: Cascade)
-  caption       String?
-  quoteEnabled  Boolean        @default(false)
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  
-  media         PostMedia[]
-  likes         PostLike[]
-  comments      Comment[]
+  id              String   @id @default(uuid())
+  designerId      String
+  designer        User     @relation(fields: [designerId], references: [id], onDelete: Cascade)
+  caption         String?
+  quoteEnabled    Boolean  @default(false)
+  isClientRequest Boolean  @default(false)
+  budget          Decimal? @db.Decimal(10, 2)
+  quoteInquiryId  String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  media      PostMedia[]
+  likes      PostLike[]
+  comments   Comment[]
+  savedPosts SavedPost[]
+
+  @@index([designerId, createdAt])
+  @@index([createdAt])
+  @@index([quoteEnabled, createdAt])
+  @@index([isClientRequest, createdAt])
 }
 
 enum MediaType {
@@ -117,6 +178,8 @@ model PostMedia {
   type      MediaType
   order     Int       @default(0)
   createdAt DateTime  @default(now())
+
+  @@index([postId, order])
 }
 
 model PostLike {
@@ -127,22 +190,37 @@ model PostLike {
   createdAt DateTime @default(now())
 
   @@id([postId, userId])
+  @@index([userId, createdAt])
+}
+
+model SavedPost {
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([postId, userId])
+  @@index([userId, createdAt])
 }
 
 model Comment {
-  id        String        @id @default(uuid())
+  id        String    @id @default(uuid())
   postId    String
-  post      Post          @relation(fields: [postId], references: [id], onDelete: Cascade)
+  post      Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
   userId    String
-  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   content   String
   parentId  String?
-  parent    Comment?      @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
-  replies   Comment[]     @relation("CommentReplies")
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
-  
-  likes     CommentLike[]
+  parent    Comment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   Comment[] @relation("CommentReplies")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  likes CommentLike[]
+
+  @@index([postId, parentId, createdAt])
+  @@index([userId, createdAt])
 }
 
 model CommentLike {
@@ -153,51 +231,54 @@ model CommentLike {
   createdAt DateTime @default(now())
 
   @@id([commentId, userId])
+  @@index([userId, createdAt])
 }
 
 model MeasurementProfile {
-  id                 String   @id @default(uuid())
-  userId             String
-  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name               String
-  gender             String   // "MALE" or "FEMALE"
-  unit               String   // "cm" or "inch"
-  
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name   String
+  gender String // "MALE" or "FEMALE"
+  unit   String // "cm" or "inch"
+
   // Female metrics
-  neck_circumference Float?
-  shoulder_width     Float?
-  bust_circumference Float?
-  under_bust         Float?
-  natural_waist      Float?
-  bicep_girth        Float?
+  neck_circumference  Float?
+  shoulder_width      Float?
+  bust_circumference  Float?
+  under_bust          Float?
+  natural_waist       Float?
+  bicep_girth         Float?
   wrist_circumference Float?
-  hips_full          Float?
-  skirt_length       Float?
+  hips_full           Float?
+  skirt_length        Float?
 
   // Male metrics
-  neck_collar        Float?
-  shoulder_breadth   Float?
-  chest_girth        Float?
-  stomach_mid        Float?
-  waist_line         Float?
-  arm_hole           Float?
-  cuff_girth         Float?
-  seat_hips          Float?
-  outseam            Float?
+  neck_collar      Float?
+  shoulder_breadth Float?
+  chest_girth      Float?
+  stomach_mid      Float?
+  waist_line       Float?
+  arm_hole         Float?
+  cuff_girth       Float?
+  seat_hips        Float?
+  outseam          Float?
 
   // Shared metrics
-  sleeve_length      Float?
-  trouser_rise       Float?
-  inseam             Float?
+  sleeve_length Float?
+  trouser_rise  Float?
+  inseam        Float?
 
   // Cultural metrics
   agbada_span        Float?
   kaftan_length      Float?
   head_circumference Float?
 
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
-  quoteInquiries     QuoteInquiry[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  quoteInquiries QuoteInquiry[]
+
+  @@index([userId, updatedAt])
 }
 
 model QuoteInquiry {
@@ -210,16 +291,21 @@ model QuoteInquiry {
   customer             User                @relation("CustomerInquiries", fields: [customerId], references: [id], onDelete: Cascade)
   measurementProfileId String?
   measurementProfile   MeasurementProfile? @relation(fields: [measurementProfileId], references: [id], onDelete: SetNull)
-  
-  specialInstructions  String?
-  budget               Decimal             @db.Decimal(10, 2)
-  colorPalette         String[]
-  material             String?
-  status               String              @default("PENDING") // PENDING, ACCEPTED, REJECTED
-  createdAt            DateTime            @default(now())
-  
-  inspirations         InspirationImage[]
-  quotation            Quotation?
+
+  specialInstructions String?
+  budget              Decimal  @db.Decimal(10, 2)
+  colorPalette        String[]
+  material            String?
+  status              String   @default("PENDING") // PENDING, ACCEPTED, REJECTED
+  createdAt           DateTime @default(now())
+
+  inspirations InspirationImage[]
+  quotation    Quotation?
+
+  @@index([designerId, status, createdAt])
+  @@index([customerId, createdAt])
+  @@index([pieceId, createdAt])
+  @@index([measurementProfileId])
 }
 
 model InspirationImage {
@@ -227,6 +313,8 @@ model InspirationImage {
   quoteInquiryId String
   quoteInquiry   QuoteInquiry @relation(fields: [quoteInquiryId], references: [id], onDelete: Cascade)
   url            String
+
+  @@index([quoteInquiryId])
 }
 
 model Piece {
@@ -239,11 +327,16 @@ model Piece {
   primaryImageUrl String
   category        String
   heritage        String
+  status          String            @default("PUBLISHED") // "PUBLISHED" or "DRAFT"
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
   images          PieceImage[]
   collections     CollectionPiece[]
   quoteInquiries  QuoteInquiry[]
+
+  @@index([storeId, status, createdAt])
+  @@index([category, createdAt])
+  @@index([heritage, createdAt])
 }
 
 model PieceImage {
@@ -252,6 +345,8 @@ model PieceImage {
   piece   Piece  @relation(fields: [pieceId], references: [id], onDelete: Cascade)
   url     String
   order   Int    @default(0)
+
+  @@index([pieceId, order])
 }
 
 model Collection {
@@ -264,6 +359,8 @@ model Collection {
   createdAt DateTime          @default(now())
   updatedAt DateTime          @updatedAt
   pieces    CollectionPiece[]
+
+  @@index([storeId, createdAt])
 }
 
 model CollectionPiece {
@@ -274,26 +371,30 @@ model CollectionPiece {
   createdAt    DateTime   @default(now())
 
   @@id([collectionId, pieceId])
+  @@index([pieceId])
 }
 
 model Quotation {
-  id                         String       @id @default(uuid())
-  inquiryId                  String       @unique
-  inquiry                    QuoteInquiry @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
-  
-  materialFabricCost         Decimal      @db.Decimal(10, 2)
-  tailoringCraftsmanshipCost Decimal      @db.Decimal(10, 2)
-  embellishmentCost          Decimal      @db.Decimal(10, 2)
-  fittingCost                Decimal      @db.Decimal(10, 2)
-  
-  expectedCompletionDate     DateTime
-  terms                      String?
-  depositNotes               String?
-  status                     String       @default("PENDING") // PENDING, ACCEPTED, REJECTED
-  
-  createdAt                  DateTime     @default(now())
-  updatedAt                  DateTime     @updatedAt
-  order                      Order?
+  id        String       @id @default(uuid())
+  inquiryId String       @unique
+  inquiry   QuoteInquiry @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+
+  materialFabricCost         Decimal @db.Decimal(10, 2)
+  tailoringCraftsmanshipCost Decimal @db.Decimal(10, 2)
+  embellishmentCost          Decimal @db.Decimal(10, 2)
+  fittingCost                Decimal @db.Decimal(10, 2)
+
+  expectedCompletionDate DateTime
+  terms                  String?
+  depositNotes           String?
+  status                 String   @default("PENDING") // PENDING, ACCEPTED, REJECTED
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  order     Order?
+
+  @@index([status, createdAt])
+  @@index([updatedAt])
 }
 
 model Order {
@@ -309,11 +410,15 @@ model Order {
   technicalSpecs     String?
   cancellationReason String?
   refundAmount       Decimal?        @db.Decimal(10, 2)
-  refundStatus       String?         // PENDING, PROCESSED
+  refundStatus       String? // PENDING, PROCESSED
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
   timeline           OrderTimeline[]
   review             Review?
+
+  @@index([designerId, status, createdAt])
+  @@index([customerId, createdAt])
+  @@index([status, createdAt])
 }
 
 model OrderTimeline {
@@ -323,6 +428,8 @@ model OrderTimeline {
   title       String
   description String?
   createdAt   DateTime @default(now())
+
+  @@index([orderId, createdAt])
 }
 
 model ChatRoom {
@@ -336,51 +443,63 @@ model ChatRoom {
   messages  ChatMessage[]
 
   @@unique([user1Id, user2Id])
+  @@index([user1Id, updatedAt])
+  @@index([user2Id, updatedAt])
 }
 
 model ChatMessage {
-  id         String   @id @default(uuid())
-  roomId     String
-  room       ChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
-  senderId   String
-  sender     User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
-  content    String
-  mediaUrl   String?
-  isDeleted  Boolean  @default(false)
-  createdAt  DateTime @default(now())
+  id        String   @id @default(uuid())
+  roomId    String
+  room      ChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  senderId  String
+  sender    User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  content   String
+  mediaUrl  String?
+  isDeleted Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([roomId, createdAt])
+  @@index([senderId, createdAt])
 }
 
 model Notification {
   id          String   @id @default(uuid())
   userId      String
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type        String   // ORDERS, SOCIALS
+  type        String // ORDERS, SOCIALS
   title       String
   message     String
   amount      Decimal? @db.Decimal(10, 2)
   referenceId String?
   isRead      Boolean  @default(false)
   createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, type, createdAt])
+  @@index([userId, isRead, createdAt])
 }
 
 model Review {
-  id            String        @id @default(uuid())
-  orderId       String        @unique
-  order         Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  designerId    String
-  designer      User          @relation("DesignerReviews", fields: [designerId], references: [id], onDelete: Cascade)
-  customerId    String
-  customer      User          @relation("CustomerReviews", fields: [customerId], references: [id], onDelete: Cascade)
-  
-  communication Int           // 1 to 5 stars
-  timeliness    Int           // 1 to 5 stars
-  quality       Int           // 1 to 5 stars
-  overall       Float         // Average score
+  id         String @id @default(uuid())
+  orderId    String @unique
+  order      Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  designerId String
+  designer   User   @relation("DesignerReviews", fields: [designerId], references: [id], onDelete: Cascade)
+  customerId String
+  customer   User   @relation("CustomerReviews", fields: [customerId], references: [id], onDelete: Cascade)
+
+  communication Int // 1 to 5 stars
+  timeliness    Int // 1 to 5 stars
+  quality       Int // 1 to 5 stars
+  overall       Float // Average score
   description   String?
   images        ReviewImage[]
-  
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([designerId, createdAt])
+  @@index([customerId, createdAt])
 }
 
 model ReviewImage {
@@ -388,4 +507,6 @@ model ReviewImage {
   reviewId String
   review   Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
   url      String
+
+  @@index([reviewId])
 }

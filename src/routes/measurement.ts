@@ -289,10 +289,7 @@ measurementRouter.get("/user/:userId", async (req: Request, res: Response): Prom
   try {
     const userId = req.params.userId as string;
 
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (!user) {
-      return res.status(404).json({ error: "User account not found." });
-    }
+    // Query measurement profiles directly for target userId to optimize performance
 
     const profiles = await prisma.measurementProfile.findMany({
       where: { userId },
@@ -571,7 +568,7 @@ measurementRouter.get("/:id/download", async (req: Request, res: Response): Prom
     ];
 
     let text = `==================================================\n`;
-    text += `BEVIKS Bespoke Sizing Profile Report\n`;
+    text += `BEVIKS Custom Sizing Profile Report\n`;
     text += `==================================================\n\n`;
     text += `Profile Name: ${profile.name}\n`;
     text += `Gender: ${profile.gender}\n`;

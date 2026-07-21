@@ -118,7 +118,7 @@ export const pieceRouter = Router();
 pieceRouter.post("/stores/:storeId/pieces", async (req: Request, res: Response): Promise<any> => {
   try {
     const storeId = req.params.storeId as string;
-    const { name, description, price, primaryImageUrl, category, heritage, otherImages } = req.body;
+    const { name, description, price, primaryImageUrl, category, heritage, otherImages, status } = req.body;
 
     if (!storeId || !name || !description || price === undefined || !primaryImageUrl || !category || !heritage) {
       return res.status(400).json({ error: "Missing required piece fields." });
@@ -138,6 +138,7 @@ pieceRouter.post("/stores/:storeId/pieces", async (req: Request, res: Response):
         primaryImageUrl,
         category,
         heritage,
+        status: status === "DRAFT" ? "DRAFT" : "PUBLISHED",
         images: {
           create: otherImages ? otherImages.map((url: string, index: number) => ({
             url,
@@ -199,6 +200,57 @@ pieceRouter.get("/stores/:storeId/pieces", async (req: Request, res: Response): 
     return res.status(200).json(pieces);
   } catch (error: any) {
     console.error("Get store pieces error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+pieceRouter.get("/pieces/:id", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = req.params.id as string;
+
+    const piece = await prisma.piece.findUnique({
+      where: { id },
+      include: {
+        images: { orderBy: { order: "asc" } },
+        store: {
+          select: {
+            id: true,
+            name: true,
+            designerId: true,
+            logoUrl: true,
+            description: true
+          }
+        }
+      }
+    });
+
+    if (!piece) {
+      return res.status(404).json({ error: "Piece not found." });
+    }
+
+    const reviews = await prisma.review.findMany({
+      where: {
+        order: {
+          quotation: {
+            inquiry: { pieceId: id }
+          }
+        }
+      },
+      select: { overall: true }
+    });
+    const averageOverall = reviews.length === 0
+      ? 5
+      : Number((reviews.reduce((sum, review) => sum + review.overall, 0) / reviews.length).toFixed(2));
+
+    return res.status(200).json({
+      ...piece,
+      reviewsSummary: {
+        averageOverall,
+        totalReviews: reviews.length
+      }
+    });
+  } catch (error: any) {
+    console.error("Get piece error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
@@ -327,10 +379,21 @@ pieceRouter.put("/pieces/:id", async (req: Request, res: Response): Promise<any>
 pieceRouter.delete("/pieces/:id", async (req: Request, res: Response): Promise<any> => {
   try {
     const id = req.params.id as string;
+    const designerId = (req.query.designerId as string | undefined) || req.body?.designerId;
 
-    const piece = await prisma.piece.findUnique({ where: { id } });
+    if (!designerId) {
+      return res.status(400).json({ error: "designerId is required to delete a piece." });
+    }
+
+    const piece = await prisma.piece.findUnique({
+      where: { id },
+      include: { store: { select: { designerId: true } } }
+    });
     if (!piece) {
       return res.status(404).json({ error: "Piece not found." });
+    }
+    if (piece.store.designerId !== designerId) {
+      return res.status(403).json({ error: "Only the store owner can delete this piece." });
     }
 
     await prisma.piece.delete({ where: { id } });
@@ -338,6 +401,53 @@ pieceRouter.delete("/pieces/:id", async (req: Request, res: Response): Promise<a
     return res.status(200).json({ message: "Piece successfully deleted." });
   } catch (error: any) {
     console.error("Delete piece error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+pieceRouter.post("/pieces/:id/report", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = req.params.id as string;
+    const { userId, reason, details } = req.body;
+
+    if (!userId || !reason) {
+      return res.status(400).json({ error: "userId and reason are required." });
+    }
+
+    const [piece, user] = await Promise.all([
+      prisma.piece.findUnique({ where: { id }, include: { store: true } }),
+      prisma.user.findUnique({ where: { id: userId } })
+    ]);
+
+    if (!piece) {
+      return res.status(404).json({ error: "Piece not found." });
+    }
+    if (!user) {
+      return res.status(404).json({ error: "User profile not found." });
+    }
+
+    const ticket = await prisma.supportTicket.create({
+      data: {
+        ticketNumber: `RPT-${Date.now().toString(36).toUpperCase()}`,
+        userId,
+        subject: `Reported piece: ${piece.name}`,
+        category: "REPORT_PIECE",
+        status: "OPEN",
+        lastMessage: `${reason}${details ? ` - ${details}` : ""}`,
+        messages: {
+          create: {
+            senderId: userId,
+            senderName: user.fullName,
+            senderRole: "USER",
+            content: `Piece ID: ${id}\nStore ID: ${piece.storeId}\nReason: ${reason}${details ? `\nDetails: ${details}` : ""}`
+          }
+        }
+      }
+    });
+
+    return res.status(201).json({ message: "Piece report submitted.", ticket });
+  } catch (error: any) {
+    console.error("Report piece error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });

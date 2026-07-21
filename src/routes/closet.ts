@@ -1,4 +1,4 @@
-﻿import { Router, Request, Response } from "express";
+import { Router, Request, Response } from "express";
 import { prisma } from "../db.js";
 
 export const closetRouter = Router();
@@ -56,7 +56,22 @@ closetRouter.get("/user/:userId", async (req: Request, res: Response): Promise<a
         piece: {
           include: { images: { orderBy: { order: "asc" } } }
         },
-        quotation: true
+        designer: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+          }
+        },
+        quotation: {
+          include: {
+            order: {
+              include: {
+                timeline: { orderBy: { createdAt: "asc" } }
+              }
+            }
+          }
+        }
       },
       orderBy: { createdAt: "desc" }
     });

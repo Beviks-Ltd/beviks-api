@@ -1,7 +1,56 @@
 import { Router, Request, Response } from "express";
 import { prisma } from "../db.js";
+import { sendPushToUser } from "../utils/push.js";
+import { buildBeviksEmailHtml, sendEmail } from "../utils/email.js";
+import { invalidateResponseCache, sendCachedJson, uncachedJson } from "../utils/responseCache.js";
 
 export const quotationRouter = Router();
+
+function quotationTotal(quotation: {
+  materialFabricCost: any;
+  tailoringCraftsmanshipCost: any;
+  embellishmentCost: any;
+  fittingCost: any;
+}) {
+  return Number(quotation.materialFabricCost) +
+    Number(quotation.tailoringCraftsmanshipCost) +
+    Number(quotation.embellishmentCost) +
+    Number(quotation.fittingCost);
+}
+
+async function sendQuotationEmail({
+  to,
+  userName,
+  title,
+  bodyText,
+  buttonText,
+  buttonUrl,
+}: {
+  to?: string | null;
+  userName?: string | null;
+  title: string;
+  bodyText: string;
+  buttonText?: string;
+  buttonUrl?: string;
+}) {
+  if (!to) return;
+  try {
+    await sendEmail({
+      to,
+      subject: title,
+      text: bodyText,
+      html: buildBeviksEmailHtml({
+        title,
+        userName: userName || undefined,
+        bodyText,
+        buttonText,
+        buttonUrl,
+      }),
+    });
+  } catch (error) {
+    console.error("Quotation email error:", error);
+  }
+}
 
 /**
  * @openapi
@@ -132,7 +181,9 @@ quotationRouter.post("/inquiries/:inquiryId/quotation", async (req: Request, res
       where: { id: inquiryId },
       include: { 
         quotation: true,
-        piece: { select: { name: true } }
+        piece: { select: { name: true } },
+        customer: { select: { id: true, fullName: true, email: true } },
+        designer: { select: { id: true, fullName: true, email: true, store: { select: { name: true } } } }
       }
     });
 
@@ -144,24 +195,32 @@ quotationRouter.post("/inquiries/:inquiryId/quotation", async (req: Request, res
       return res.status(400).json({ error: "A quotation has already been submitted for this inquiry." });
     }
 
-    const quotation = await prisma.quotation.create({
-      data: {
-        inquiryId,
-        materialFabricCost,
-        tailoringCraftsmanshipCost,
-        embellishmentCost,
-        fittingCost,
-        expectedCompletionDate: new Date(expectedCompletionDate),
-        terms,
-        depositNotes,
-        status: "PENDING"
-      }
+    const quotation = await prisma.$transaction(async (tx) => {
+      const created = await tx.quotation.create({
+        data: {
+          inquiryId,
+          materialFabricCost,
+          tailoringCraftsmanshipCost,
+          embellishmentCost,
+          fittingCost,
+          expectedCompletionDate: new Date(expectedCompletionDate),
+          terms,
+          depositNotes,
+          status: "PENDING"
+        }
+      });
+
+      await tx.quoteInquiry.update({
+        where: { id: inquiryId },
+        data: { status: "QUOTED" }
+      });
+
+      return created;
     });
 
-    const totalCost = Number(materialFabricCost) + 
-                      Number(tailoringCraftsmanshipCost) + 
-                      Number(embellishmentCost) + 
-                      Number(fittingCost);
+    const totalCost = quotationTotal(quotation);
+    const designerName = inquiry.designer?.store?.name || inquiry.designer?.fullName || "Your Beviks designer";
+    const quoteUrl = `beviksmobile://designer/quote-acceptance?quotationId=${quotation.id}`;
 
     // Create notification for Customer
     await prisma.notification.create({
@@ -175,9 +234,263 @@ quotationRouter.post("/inquiries/:inquiryId/quotation", async (req: Request, res
       }
     });
 
+    await sendPushToUser(
+      inquiry.customerId,
+      "New Quotation Received",
+      `Designer has submitted a quote totaling ${totalCost.toFixed(2)} for your inquiry on piece '${inquiry.piece.name}'.`
+    );
+
+    await sendQuotationEmail({
+      to: inquiry.customer?.email,
+      userName: inquiry.customer?.fullName,
+      title: "New Quotation Received",
+      bodyText: `${designerName} has sent a quote totaling ${totalCost.toFixed(2)} for '${inquiry.piece.name}'. Review it in Beviks to accept, decline, or message the designer.`,
+      buttonText: "VIEW QUOTATION",
+      buttonUrl: quoteUrl,
+    });
+
+    invalidateResponseCache("quotations:");
+    invalidateResponseCache("inquiries:");
+    invalidateResponseCache(`notifications:user:${inquiry.customerId}`);
+
     return res.status(201).json(quotation);
   } catch (error: any) {
     console.error("Create quotation error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+quotationRouter.get("/designers/:designerId/quotations", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const designerId = req.params.designerId as string;
+    const status = typeof req.query.status === "string" ? req.query.status.toUpperCase() : undefined;
+
+    return sendCachedJson(req, res, `quotations:designer:${designerId}:${status || "PENDING"}`, 8000, async () => {
+      const quotations = await prisma.quotation.findMany({
+        where: {
+          ...(status ? { status } : { status: "PENDING" }),
+          inquiry: { designerId }
+        },
+        include: {
+          order: true,
+          inquiry: {
+            include: {
+              customer: { select: { id: true, fullName: true, profileImageUrl: true } },
+              designer: {
+                select: {
+                  id: true,
+                  fullName: true,
+                  profileImageUrl: true,
+                  store: { select: { id: true, name: true, logoUrl: true, description: true } }
+                }
+              },
+              piece: { select: { id: true, name: true, primaryImageUrl: true } },
+              measurementProfile: true,
+              inspirations: true
+            }
+          }
+        },
+        orderBy: { createdAt: "desc" }
+      });
+
+      return quotations.map((quotation) => {
+        const totalQuoteAmount = Number(quotation.materialFabricCost) +
+          Number(quotation.tailoringCraftsmanshipCost) +
+          Number(quotation.embellishmentCost) +
+          Number(quotation.fittingCost);
+
+        return {
+          ...quotation,
+          materialFabricCost: Number(quotation.materialFabricCost),
+          tailoringCraftsmanshipCost: Number(quotation.tailoringCraftsmanshipCost),
+          embellishmentCost: Number(quotation.embellishmentCost),
+          fittingCost: Number(quotation.fittingCost),
+          totalQuoteAmount,
+          depositAmount: totalQuoteAmount / 2
+        };
+      });
+    });
+  } catch (error: any) {
+    console.error("Get designer quotations error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+quotationRouter.get("/quotations/:id", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = req.params.id as string;
+
+    return sendCachedJson(req, res, `quotations:detail:${id}`, 8000, async () => {
+      const quotation = await prisma.quotation.findUnique({
+        where: { id },
+        include: {
+          order: true,
+          inquiry: {
+            include: {
+              customer: { select: { id: true, fullName: true, profileImageUrl: true } },
+              designer: {
+                select: {
+                  id: true,
+                  fullName: true,
+                  profileImageUrl: true,
+                  store: { select: { id: true, name: true, logoUrl: true, description: true } }
+                }
+              },
+              piece: { select: { id: true, name: true, primaryImageUrl: true } },
+              measurementProfile: true
+            }
+          }
+        }
+      });
+
+      if (!quotation) {
+        return uncachedJson(404, { error: "Quotation not found." });
+      }
+
+      const totalQuoteAmount = Number(quotation.materialFabricCost) +
+        Number(quotation.tailoringCraftsmanshipCost) +
+        Number(quotation.embellishmentCost) +
+        Number(quotation.fittingCost);
+
+      return {
+        ...quotation,
+        materialFabricCost: Number(quotation.materialFabricCost),
+        tailoringCraftsmanshipCost: Number(quotation.tailoringCraftsmanshipCost),
+        embellishmentCost: Number(quotation.embellishmentCost),
+        fittingCost: Number(quotation.fittingCost),
+        totalQuoteAmount,
+        depositAmount: totalQuoteAmount / 2
+      };
+    });
+  } catch (error: any) {
+    console.error("Get quotation error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+quotationRouter.put("/quotations/:id", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = req.params.id as string;
+    const {
+      materialFabricCost,
+      tailoringCraftsmanshipCost,
+      embellishmentCost,
+      fittingCost,
+      expectedCompletionDate,
+      terms,
+      depositNotes
+    } = req.body;
+
+    if (
+      materialFabricCost === undefined ||
+      tailoringCraftsmanshipCost === undefined ||
+      embellishmentCost === undefined ||
+      fittingCost === undefined ||
+      !expectedCompletionDate
+    ) {
+      return res.status(400).json({ error: "Missing required itemized cost parameters." });
+    }
+
+    const quotation = await prisma.quotation.findUnique({
+      where: { id },
+      include: {
+        order: true,
+        inquiry: {
+          include: {
+            customer: { select: { id: true, fullName: true, email: true } },
+            designer: { select: { id: true, fullName: true, email: true, store: { select: { name: true } } } },
+            piece: { select: { id: true, name: true, primaryImageUrl: true } },
+            measurementProfile: true
+          }
+        }
+      }
+    });
+
+    if (!quotation) {
+      return res.status(404).json({ error: "Quotation not found." });
+    }
+
+    if (quotation.order || quotation.status === "ACCEPTED") {
+      return res.status(400).json({ error: "Accepted quotations cannot be edited or resent." });
+    }
+
+    const updatedQuotation = await prisma.$transaction(async (tx) => {
+      const updated = await tx.quotation.update({
+        where: { id },
+        data: {
+          materialFabricCost,
+          tailoringCraftsmanshipCost,
+          embellishmentCost,
+          fittingCost,
+          expectedCompletionDate: new Date(expectedCompletionDate),
+          terms,
+          depositNotes,
+          status: "PENDING"
+        },
+        include: {
+          order: true,
+          inquiry: {
+            include: {
+              customer: { select: { id: true, fullName: true, email: true } },
+              designer: { select: { id: true, fullName: true, email: true, store: { select: { name: true } } } },
+              piece: { select: { id: true, name: true, primaryImageUrl: true } },
+              measurementProfile: true
+            }
+          }
+        }
+      });
+
+      await tx.quoteInquiry.update({
+        where: { id: updated.inquiryId },
+        data: { status: "QUOTED" }
+      });
+
+      await tx.notification.create({
+        data: {
+          userId: updated.inquiry.customerId,
+          type: "ORDERS",
+          title: "Quotation Updated",
+          message: `${updated.inquiry.designer.store?.name || updated.inquiry.designer.fullName} updated the quote for ${updated.inquiry.piece.name}.`,
+          amount: quotationTotal(updated),
+          referenceId: updated.id
+        }
+      });
+
+      return updated;
+    });
+
+    const totalQuoteAmount = quotationTotal(updatedQuotation);
+    const designerName = updatedQuotation.inquiry.designer.store?.name || updatedQuotation.inquiry.designer.fullName || "Designer";
+    const quoteUrl = `beviksmobile://designer/quote-acceptance?quotationId=${encodeURIComponent(updatedQuotation.id)}`;
+
+    await sendPushToUser(updatedQuotation.inquiry.customerId, "Quotation Updated", `${designerName} updated the quote for ${updatedQuotation.inquiry.piece.name}.`);
+    await sendQuotationEmail({
+      to: updatedQuotation.inquiry.customer.email,
+      userName: updatedQuotation.inquiry.customer.fullName,
+      title: "Quotation Updated",
+      bodyText: `${designerName} updated your quotation totaling ${totalQuoteAmount.toFixed(2)} for '${updatedQuotation.inquiry.piece.name}'. Review it in Beviks to accept, decline, or message the designer.`,
+      buttonText: "VIEW QUOTATION",
+      buttonUrl: quoteUrl,
+    });
+
+    invalidateResponseCache("quotations:");
+    invalidateResponseCache("inquiries:");
+    invalidateResponseCache(`notifications:user:${updatedQuotation.inquiry.customerId}`);
+
+    return res.status(200).json({
+      message: "Quotation updated and resent successfully.",
+      quotation: {
+        ...updatedQuotation,
+        materialFabricCost: Number(updatedQuotation.materialFabricCost),
+        tailoringCraftsmanshipCost: Number(updatedQuotation.tailoringCraftsmanshipCost),
+        embellishmentCost: Number(updatedQuotation.embellishmentCost),
+        fittingCost: Number(updatedQuotation.fittingCost),
+        totalQuoteAmount,
+        depositAmount: totalQuoteAmount / 2
+      }
+    });
+  } catch (error: any) {
+    console.error("Update quotation error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
@@ -207,7 +520,16 @@ quotationRouter.post("/quotations/:id/accept", async (req: Request, res: Respons
 
     const quotation = await prisma.quotation.findUnique({
       where: { id },
-      include: { inquiry: true, order: true }
+      include: {
+        order: true,
+        inquiry: {
+          include: {
+            customer: { select: { id: true, fullName: true, email: true } },
+            designer: { select: { id: true, fullName: true, email: true, store: { select: { name: true } } } },
+            piece: { select: { id: true, name: true, primaryImageUrl: true } }
+          }
+        }
+      }
     });
 
     if (!quotation) {
@@ -231,10 +553,7 @@ quotationRouter.post("/quotations/:id/accept", async (req: Request, res: Respons
         data: { status: "ACCEPTED" }
       });
 
-      const totalQuoteCost = Number(quotation.materialFabricCost) + 
-                             Number(quotation.tailoringCraftsmanshipCost) + 
-                             Number(quotation.embellishmentCost) + 
-                             Number(quotation.fittingCost);
+      const totalQuoteCost = quotationTotal(quotation);
 
       const order = await tx.order.create({
         data: {
@@ -269,6 +588,28 @@ quotationRouter.post("/quotations/:id/accept", async (req: Request, res: Respons
 
       return { quotation: updatedQuotation, order };
     });
+
+    const totalQuoteCost = quotationTotal(quotation);
+    const customerName = quotation.inquiry.customer?.fullName || "A Beviks client";
+    await sendPushToUser(
+      quotation.inquiry.designerId,
+      "Quotation Approved",
+      `${customerName} accepted your quote totaling ${totalQuoteCost.toFixed(2)}.`
+    );
+
+    await sendQuotationEmail({
+      to: quotation.inquiry.designer?.email,
+      userName: quotation.inquiry.designer?.fullName,
+      title: "Quotation Approved",
+      bodyText: `${customerName} accepted your quote totaling ${totalQuoteCost.toFixed(2)} for '${quotation.inquiry.piece?.name || "their Beviks piece"}'. An active order has been created.`,
+      buttonText: "VIEW ORDER",
+      buttonUrl: `beviksmobile://designer/order-details?id=${result.order.id}`,
+    });
+
+    invalidateResponseCache("quotations:");
+    invalidateResponseCache("inquiries:");
+    invalidateResponseCache("orders:");
+    invalidateResponseCache(`notifications:user:${quotation.inquiry.designerId}`);
 
     return res.status(200).json({
       message: "Quotation accepted successfully. Active order generated.",
@@ -306,7 +647,15 @@ quotationRouter.post("/quotations/:id/reject", async (req: Request, res: Respons
 
     const quotation = await prisma.quotation.findUnique({
       where: { id },
-      include: { inquiry: true }
+      include: {
+        inquiry: {
+          include: {
+            customer: { select: { id: true, fullName: true, email: true } },
+            designer: { select: { id: true, fullName: true, email: true, store: { select: { name: true } } } },
+            piece: { select: { id: true, name: true, primaryImageUrl: true } }
+          }
+        }
+      }
     });
 
     if (!quotation) {
@@ -328,10 +677,7 @@ quotationRouter.post("/quotations/:id/reject", async (req: Request, res: Respons
         data: { status: "REJECTED" }
       });
 
-      const totalQuoteCost = Number(quotation.materialFabricCost) + 
-                             Number(quotation.tailoringCraftsmanshipCost) + 
-                             Number(quotation.embellishmentCost) + 
-                             Number(quotation.fittingCost);
+      const totalQuoteCost = quotationTotal(quotation);
 
       // Create notification for Designer
       await tx.notification.create({
@@ -347,6 +693,27 @@ quotationRouter.post("/quotations/:id/reject", async (req: Request, res: Respons
 
       return updated;
     });
+
+    const totalQuoteCost = quotationTotal(quotation);
+    const customerName = quotation.inquiry.customer?.fullName || "A Beviks client";
+    await sendPushToUser(
+      quotation.inquiry.designerId,
+      "Quotation Rejected",
+      `${customerName} declined your quote totaling ${totalQuoteCost.toFixed(2)}.`
+    );
+
+    await sendQuotationEmail({
+      to: quotation.inquiry.designer?.email,
+      userName: quotation.inquiry.designer?.fullName,
+      title: "Quotation Rejected",
+      bodyText: `${customerName} declined your quote totaling ${totalQuoteCost.toFixed(2)} for '${quotation.inquiry.piece?.name || "their Beviks piece"}'. You can edit and resend the quotation from Beviks.`,
+      buttonText: "EDIT AND RESEND",
+      buttonUrl: `beviksmobile://designer/create-quote?quotationId=${quotation.id}`,
+    });
+
+    invalidateResponseCache("quotations:");
+    invalidateResponseCache("inquiries:");
+    invalidateResponseCache(`notifications:user:${quotation.inquiry.designerId}`);
 
     return res.status(200).json({
       message: "Quotation rejected successfully.",

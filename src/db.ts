@@ -5,6 +5,9 @@ import "dotenv/config";
 
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
+  max: Number(process.env.DB_POOL_MAX || 10),
+  idleTimeoutMillis: Number(process.env.DB_IDLE_TIMEOUT_MS || 30000),
+  connectionTimeoutMillis: Number(process.env.DB_CONNECTION_TIMEOUT_MS || 10000),
   ssl: {
     rejectUnauthorized: false // Required for Neon secure serverless DB connection
   }
@@ -12,6 +15,7 @@ const pool = new pg.Pool({
 
 const adapter = new PrismaPg(pool);
 const prismaRaw = new PrismaClient({ adapter });
+const slowQueryThresholdMs = Number(process.env.PRISMA_SLOW_QUERY_MS || 120);
 
 export const prisma = prismaRaw.$extends({
   query: {
@@ -19,7 +23,9 @@ export const prisma = prismaRaw.$extends({
       const start = performance.now();
       return query(args).finally(() => {
         const duration = performance.now() - start;
-        console.log(`[PRISMA DB CALL] ${model || "Raw"}.${operation} executed in ${duration.toFixed(2)}ms`);
+        if (duration >= slowQueryThresholdMs) {
+          console.warn(`[PRISMA SLOW QUERY] ${model || "Raw"}.${operation} executed in ${duration.toFixed(2)}ms`);
+        }
       });
     }
   }

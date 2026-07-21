@@ -3,6 +3,36 @@ import { prisma } from "../db.js";
 
 export const reviewRouter = Router();
 
+const emptyReviewSummary = {
+  averageCommunication: 5,
+  averageTimeliness: 5,
+  averageQuality: 5,
+  averageOverall: 5,
+  totalReviews: 0
+};
+
+function buildReviewSummary(reviews: Array<{ communication: number; timeliness: number; quality: number; overall: number }>) {
+  if (reviews.length === 0) return emptyReviewSummary;
+
+  const totals = reviews.reduce(
+    (acc, review) => ({
+      communication: acc.communication + review.communication,
+      timeliness: acc.timeliness + review.timeliness,
+      quality: acc.quality + review.quality,
+      overall: acc.overall + review.overall
+    }),
+    { communication: 0, timeliness: 0, quality: 0, overall: 0 }
+  );
+
+  return {
+    averageCommunication: Number((totals.communication / reviews.length).toFixed(2)),
+    averageTimeliness: Number((totals.timeliness / reviews.length).toFixed(2)),
+    averageQuality: Number((totals.quality / reviews.length).toFixed(2)),
+    averageOverall: Number((totals.overall / reviews.length).toFixed(2)),
+    totalReviews: reviews.length
+  };
+}
+
 /**
  * @openapi
  * components:
@@ -131,15 +161,16 @@ export const reviewRouter = Router();
 reviewRouter.post("/orders/:orderId/review", async (req: Request, res: Response): Promise<any> => {
   try {
     const orderId = req.params.orderId as string;
-    const { communication, timeliness, quality, description, imageUrls } = req.body;
+    const { communication, timeliness, quality, rating, description, comment, imageUrls } = req.body;
 
-    if (communication === undefined || timeliness === undefined || quality === undefined) {
+    if (communication === undefined && timeliness === undefined && quality === undefined && rating === undefined) {
       return res.status(400).json({ error: "communication, timeliness, and quality ratings are required." });
     }
 
-    const commScore = Number(communication);
-    const timeScore = Number(timeliness);
-    const qualScore = Number(quality);
+    const fallbackScore = Number(rating);
+    const commScore = Number(communication ?? fallbackScore);
+    const timeScore = Number(timeliness ?? fallbackScore);
+    const qualScore = Number(quality ?? fallbackScore);
 
     if ([commScore, timeScore, qualScore].some(s => s < 1 || s > 5)) {
       return res.status(400).json({ error: "Rating scores must be integers between 1 and 5." });
@@ -175,7 +206,7 @@ reviewRouter.post("/orders/:orderId/review", async (req: Request, res: Response)
           timeliness: timeScore,
           quality: qualScore,
           overall,
-          description,
+          description: description || comment,
           images: imageUrls && imageUrls.length > 0 ? {
             create: imageUrls.map((url: string) => ({ url }))
           } : undefined
@@ -211,6 +242,78 @@ reviewRouter.post("/orders/:orderId/review", async (req: Request, res: Response)
     return res.status(201).json(result);
   } catch (error: any) {
     console.error("Create review error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+reviewRouter.get("/pieces/:pieceId/reviews", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const pieceId = req.params.pieceId as string;
+
+    const piece = await prisma.piece.findUnique({ where: { id: pieceId } });
+    if (!piece) {
+      return res.status(404).json({ error: "Piece not found." });
+    }
+
+    const reviews = await prisma.review.findMany({
+      where: {
+        order: {
+          quotation: {
+            inquiry: { pieceId }
+          }
+        }
+      },
+      include: {
+        customer: { select: { id: true, fullName: true, profileImageUrl: true } },
+        images: true
+      },
+      orderBy: { createdAt: "desc" }
+    });
+
+    return res.status(200).json({
+      summary: buildReviewSummary(reviews),
+      reviews
+    });
+  } catch (error: any) {
+    console.error("Get piece reviews error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+reviewRouter.get("/collections/:collectionId/reviews", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const collectionId = req.params.collectionId as string;
+
+    const collection = await prisma.collection.findUnique({
+      where: { id: collectionId },
+      include: { pieces: { select: { pieceId: true } } }
+    });
+    if (!collection) {
+      return res.status(404).json({ error: "Collection not found." });
+    }
+
+    const pieceIds = collection.pieces.map((item) => item.pieceId);
+    const reviews = pieceIds.length === 0 ? [] : await prisma.review.findMany({
+      where: {
+        order: {
+          quotation: {
+            inquiry: { pieceId: { in: pieceIds } }
+          }
+        }
+      },
+      include: {
+        customer: { select: { id: true, fullName: true, profileImageUrl: true } },
+        images: true
+      },
+      orderBy: { createdAt: "desc" }
+    });
+
+    return res.status(200).json({
+      summary: buildReviewSummary(reviews),
+      reviews
+    });
+  } catch (error: any) {
+    console.error("Get collection reviews error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
@@ -256,42 +359,8 @@ reviewRouter.get("/designers/:designerId/reviews", async (req: Request, res: Res
       orderBy: { createdAt: "desc" }
     });
 
-    if (reviews.length === 0) {
-      return res.status(200).json({
-        summary: {
-          averageCommunication: 0,
-          averageTimeliness: 0,
-          averageQuality: 0,
-          averageOverall: 0,
-          totalReviews: 0
-        },
-        reviews: []
-      });
-    }
-
-    const total = reviews.length;
-    let sumComm = 0;
-    let sumTime = 0;
-    let sumQual = 0;
-    let sumOver = 0;
-
-    reviews.forEach(r => {
-      sumComm += r.communication;
-      sumTime += r.timeliness;
-      sumQual += r.quality;
-      sumOver += r.overall;
-    });
-
-    const summary = {
-      averageCommunication: Number((sumComm / total).toFixed(2)),
-      averageTimeliness: Number((sumTime / total).toFixed(2)),
-      averageQuality: Number((sumQual / total).toFixed(2)),
-      averageOverall: Number((sumOver / total).toFixed(2)),
-      totalReviews: total
-    };
-
     return res.status(200).json({
-      summary,
+      summary: buildReviewSummary(reviews),
       reviews
     });
   } catch (error: any) {

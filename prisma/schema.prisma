@@ -388,6 +388,7 @@ model Quotation {
   terms                  String?
   depositNotes           String?
   status                 String   @default("PENDING") // PENDING, ACCEPTED, REJECTED
+  rejectionReason        String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

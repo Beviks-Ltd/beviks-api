@@ -5,16 +5,19 @@ import { prisma } from '../db.js';
  * Deletes any user account marked `isDeleted = true` where `deletedAt` is older than 7 days.
  */
 export function startWeeklyAccountCleanupCron() {
-  if (process.env.ACCOUNT_CLEANUP_ENABLED === 'false') {
-    console.log('[ACCOUNT CLEANUP] Disabled by ACCOUNT_CLEANUP_ENABLED=false.');
+  if (process.env.ACCOUNT_CLEANUP_ENABLED !== 'true') {
+    console.log('[ACCOUNT CLEANUP] Disabled. Set ACCOUNT_CLEANUP_ENABLED=true to purge old soft-deleted users.');
     return;
   }
 
-  const CHECK_INTERVAL = Number(process.env.ACCOUNT_CLEANUP_INTERVAL_MS || 24 * 60 * 60 * 1000);
-  const INITIAL_DELAY = Number(process.env.ACCOUNT_CLEANUP_INITIAL_DELAY_MS || 60 * 1000);
+  const CHECK_INTERVAL = Number(process.env.ACCOUNT_CLEANUP_INTERVAL_MS || 7 * 24 * 60 * 60 * 1000);
+  const INITIAL_DELAY = Number(process.env.ACCOUNT_CLEANUP_INITIAL_DELAY_MS || 30 * 60 * 1000);
   const BATCH_SIZE = Number(process.env.ACCOUNT_CLEANUP_BATCH_SIZE || 10);
+  let isRunning = false;
 
   const runCleanup = async () => {
+    if (isRunning) return;
+    isRunning = true;
     try {
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
@@ -43,6 +46,8 @@ export function startWeeklyAccountCleanupCron() {
       }
     } catch (err) {
       console.error('[ACCOUNT CLEANUP ERROR]', err);
+    } finally {
+      isRunning = false;
     }
   };
 

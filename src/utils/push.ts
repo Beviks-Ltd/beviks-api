@@ -1,7 +1,8 @@
 import { prisma } from "../db.js";
 
 export async function sendPushNotification(expoPushToken: string, title: string, body: string, data?: any) {
-  if (!expoPushToken || !expoPushToken.startsWith("ExponentPushToken")) {
+  const isExpoToken = expoPushToken?.startsWith("ExponentPushToken") || expoPushToken?.startsWith("ExpoPushToken");
+  if (!isExpoToken) {
     console.log(`[Push Notification Simulation] Invalid/Missing Token: ${expoPushToken} | Title: ${title}`);
     return;
   }
@@ -16,7 +17,9 @@ export async function sendPushNotification(expoPushToken: string, title: string,
         to: expoPushToken,
         title,
         body,
-        data,
+        data: data || {},
+        sound: "default",
+        channelId: "default",
       }),
     });
 

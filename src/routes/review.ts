@@ -1,5 +1,8 @@
 import { Router, Request, Response } from "express";
 import { prisma } from "../db.js";
+import { emitNotificationCreated } from "../utils/realtime.js";
+import { sendPushToUser } from "../utils/push.js";
+import { runInBackground } from "../utils/asyncTasks.js";
 
 export const reviewRouter = Router();
 
@@ -237,6 +240,20 @@ reviewRouter.post("/orders/:orderId/review", async (req: Request, res: Response)
       });
 
       return review;
+    });
+
+    await emitNotificationCreated(order.designerId);
+    runInBackground("review.created.push", async () => {
+      await sendPushToUser(
+        order.designerId,
+        "New Review Received",
+        `Customer has left a ${result.overall.toFixed(1)}-star review for order ID ${orderId.slice(0, 8)}.`,
+        {
+          url: `/designer/order-details?id=${orderId}`,
+          type: "review",
+          orderId,
+        }
+      );
     });
 
     return res.status(201).json(result);

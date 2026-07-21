@@ -1,8 +1,54 @@
 import { Router, Request, Response } from "express";
 import { prisma } from "../db.js";
 import { invalidateResponseCache, sendCachedJson, uncachedJson } from "../utils/responseCache.js";
+import { emitNotificationCreated } from "../utils/realtime.js";
+import { sendPushToUser } from "../utils/push.js";
+import { runInBackground } from "../utils/asyncTasks.js";
 
 export const orderRouter = Router();
+
+const DEPOSIT_RATE = 0.5;
+
+type QuotePricingSource = {
+  materialFabricCost: unknown;
+  tailoringCraftsmanshipCost: unknown;
+  embellishmentCost: unknown;
+  fittingCost: unknown;
+};
+
+type OrderPaymentSource = {
+  status?: string | null;
+  refundAmount?: unknown;
+  refundStatus?: string | null;
+};
+
+function roundMoney(value: number) {
+  return Number(value.toFixed(2));
+}
+
+function quoteTotalAmount(quotation: QuotePricingSource) {
+  return roundMoney(
+    Number(quotation.materialFabricCost || 0) +
+    Number(quotation.tailoringCraftsmanshipCost || 0) +
+    Number(quotation.embellishmentCost || 0) +
+    Number(quotation.fittingCost || 0)
+  );
+}
+
+function orderPaymentSummary(order: OrderPaymentSource, totalAmount: number) {
+  const depositAmount = roundMoney(totalAmount * DEPOSIT_RATE);
+  const processedRefund = order.refundStatus === "PROCESSED" ? Number(order.refundAmount || 0) : 0;
+  const amountPaid = order.status === "CANCELLED" ? 0 : Math.max(0, depositAmount - processedRefund);
+
+  return {
+    depositRate: DEPOSIT_RATE,
+    depositAmount,
+    amountPaid: roundMoney(amountPaid),
+    paidAmount: roundMoney(amountPaid),
+    amountDue: roundMoney(Math.max(0, totalAmount - amountPaid)),
+    paymentStatus: order.status === "CANCELLED" ? "CANCELLED" : amountPaid > 0 ? "DEPOSIT_PAID" : "PENDING"
+  };
+}
 
 /**
  * @openapi
@@ -161,17 +207,18 @@ orderRouter.get("/designers/:designerId/orders/active", async (req: Request, res
 
       return orders.map(order => {
         const q = order.quotation;
-        const totalAmount = Number(q.materialFabricCost) +
-                            Number(q.tailoringCraftsmanshipCost) +
-                            Number(q.embellishmentCost) +
-                            Number(q.fittingCost);
+        const totalAmount = quoteTotalAmount(q);
+        const paymentSummary = orderPaymentSummary(order, totalAmount);
         return {
           orderId: order.id,
+          designerId: order.designerId,
+          customerId: order.customerId,
           status: order.status,
           progressPercentage: order.progressPercentage,
           acceptedDate: order.createdAt,
           estimatedDelivery: q.expectedCompletionDate,
           totalQuoteAmount: totalAmount,
+          ...paymentSummary,
           pieceName: q.inquiry.piece.name,
           pieceImageUrl: q.inquiry.piece.primaryImageUrl,
           customerName: order.customer.fullName,
@@ -231,17 +278,18 @@ orderRouter.get("/designers/:designerId/orders/completed", async (req: Request, 
 
       return orders.map(order => {
         const q = order.quotation;
-        const totalAmount = Number(q.materialFabricCost) +
-                            Number(q.tailoringCraftsmanshipCost) +
-                            Number(q.embellishmentCost) +
-                            Number(q.fittingCost);
+        const totalAmount = quoteTotalAmount(q);
+        const paymentSummary = orderPaymentSummary(order, totalAmount);
         return {
           orderId: order.id,
+          designerId: order.designerId,
+          customerId: order.customerId,
           status: order.status,
           progressPercentage: order.progressPercentage,
           acceptedDate: order.createdAt,
           estimatedDelivery: q.expectedCompletionDate,
           totalQuoteAmount: totalAmount,
+          ...paymentSummary,
           pieceName: q.inquiry.piece.name,
           pieceImageUrl: q.inquiry.piece.primaryImageUrl,
           customerName: order.customer.fullName,
@@ -322,10 +370,8 @@ orderRouter.get("/orders/:id", async (req: Request, res: Response): Promise<any>
       }
 
       const q = order.quotation;
-      const totalAmount = Number(q.materialFabricCost) +
-                          Number(q.tailoringCraftsmanshipCost) +
-                          Number(q.embellishmentCost) +
-                          Number(q.fittingCost);
+      const totalAmount = quoteTotalAmount(q);
+      const paymentSummary = orderPaymentSummary(order, totalAmount);
 
       return {
         id: order.id,
@@ -338,6 +384,7 @@ orderRouter.get("/orders/:id", async (req: Request, res: Response): Promise<any>
         cancellationReason: order.cancellationReason,
         refundAmount: order.refundAmount ? Number(order.refundAmount) : null,
         refundStatus: order.refundStatus,
+        ...paymentSummary,
         createdAt: order.createdAt,
         updatedAt: order.updatedAt,
         designer: order.designer,
@@ -430,17 +477,18 @@ orderRouter.get("/users/:userId/orders", async (req: Request, res: Response): Pr
 
       return orders.map(order => {
         const q = order.quotation;
-        const totalAmount = Number(q.materialFabricCost) +
-                            Number(q.tailoringCraftsmanshipCost) +
-                            Number(q.embellishmentCost) +
-                            Number(q.fittingCost);
+        const totalAmount = quoteTotalAmount(q);
+        const paymentSummary = orderPaymentSummary(order, totalAmount);
         return {
           orderId: order.id,
+          designerId: order.designerId,
+          customerId: order.customerId,
           status: order.status,
           progressPercentage: order.progressPercentage,
           acceptedDate: order.createdAt,
           estimatedDelivery: q.expectedCompletionDate,
           totalQuoteAmount: totalAmount,
+          ...paymentSummary,
           pieceName: q.inquiry.piece.name,
           pieceImageUrl: q.inquiry.piece.primaryImageUrl,
           designer: order.designer
@@ -516,6 +564,9 @@ orderRouter.put("/orders/:id", async (req: Request, res: Response): Promise<any>
     if (status) updatedData.status = status;
     if (progressPercentage !== undefined) updatedData.progressPercentage = Number(progressPercentage);
     if (technicalSpecs !== undefined) updatedData.technicalSpecs = technicalSpecs;
+    const shouldNotifyCustomer = Boolean(status || progressPercentage !== undefined);
+    const progressValue = progressPercentage !== undefined ? Number(progressPercentage) : order.progressPercentage;
+    const orderProgressMessage = `Your order status has been updated to ${status || order.status} (Progress: ${progressValue}%).`;
 
     const updatedOrder = await prisma.$transaction(async (tx) => {
       const updated = await tx.order.update({
@@ -551,7 +602,7 @@ orderRouter.put("/orders/:id", async (req: Request, res: Response): Promise<any>
             userId: order.customerId,
             type: "ORDERS",
             title: "Order Progress Updated",
-            message: `Your order status has been updated to ${status || order.status} (Progress: ${progressPercentage !== undefined ? progressPercentage : order.progressPercentage}%).`,
+            message: orderProgressMessage,
             referenceId: id
           }
         });
@@ -567,6 +618,16 @@ orderRouter.put("/orders/:id", async (req: Request, res: Response): Promise<any>
 
     invalidateResponseCache("orders:");
     invalidateResponseCache(`notifications:user:${order.customerId}`);
+    if (shouldNotifyCustomer) {
+      await emitNotificationCreated(order.customerId);
+      runInBackground("order.progress.push", async () => {
+        await sendPushToUser(order.customerId, "Order Progress Updated", orderProgressMessage, {
+          url: `/client/order-tracking?orderId=${id}&id=${id}`,
+          type: "order",
+          orderId: id,
+        });
+      });
+    }
 
     return res.status(200).json({
       message: "Order updated successfully.",
@@ -658,6 +719,7 @@ orderRouter.post("/orders/:id/adjust-price", async (req: Request, res: Response)
                      Number(tailoringCraftsmanshipCost) + 
                      Number(embellishmentCost) + 
                      Number(fittingCost);
+    const priceAdjustmentMessage = `Designer adjusted the order total price from ${oldTotal.toFixed(2)} to ${newTotal.toFixed(2)}. Reason: ${adjustmentReason}`;
 
     const updated = await prisma.$transaction(async (tx) => {
       // Update quotation costs
@@ -686,7 +748,7 @@ orderRouter.post("/orders/:id/adjust-price", async (req: Request, res: Response)
           userId: order.customerId,
           type: "ORDERS",
           title: "Order Price Adjusted",
-          message: `Designer adjusted the order total price from ${oldTotal.toFixed(2)} to ${newTotal.toFixed(2)}. Reason: ${adjustmentReason}`,
+          message: priceAdjustmentMessage,
           amount: newTotal,
           referenceId: id
         }
@@ -703,6 +765,14 @@ orderRouter.post("/orders/:id/adjust-price", async (req: Request, res: Response)
 
     invalidateResponseCache("orders:");
     invalidateResponseCache(`notifications:user:${order.customerId}`);
+    await emitNotificationCreated(order.customerId);
+    runInBackground("order.price-adjusted.push", async () => {
+      await sendPushToUser(order.customerId, "Order Price Adjusted", priceAdjustmentMessage, {
+        url: `/client/order-tracking?orderId=${id}&id=${id}`,
+        type: "order",
+        orderId: id,
+      });
+    });
 
     return res.status(200).json({
       message: "Order pricing adjusted successfully.",
@@ -770,6 +840,7 @@ orderRouter.post("/orders/:id/adjust-schedule", async (req: Request, res: Respon
 
     const oldDateStr = order.quotation.expectedCompletionDate.toLocaleDateString();
     const newDate = new Date(expectedCompletionDate);
+    const scheduleMessage = `Designer adjusted the delivery date from ${oldDateStr} to ${newDate.toLocaleDateString()}. Reason: ${scheduleReason}`;
 
     const updated = await prisma.$transaction(async (tx) => {
       // Update expectedCompletionDate
@@ -793,7 +864,7 @@ orderRouter.post("/orders/:id/adjust-schedule", async (req: Request, res: Respon
           userId: order.customerId,
           type: "ORDERS",
           title: "Order Schedule Shifted",
-          message: `Designer adjusted the delivery date from ${oldDateStr} to ${newDate.toLocaleDateString()}. Reason: ${scheduleReason}`,
+          message: scheduleMessage,
           referenceId: id
         }
       });
@@ -809,6 +880,14 @@ orderRouter.post("/orders/:id/adjust-schedule", async (req: Request, res: Respon
 
     invalidateResponseCache("orders:");
     invalidateResponseCache(`notifications:user:${order.customerId}`);
+    await emitNotificationCreated(order.customerId);
+    runInBackground("order.schedule-shifted.push", async () => {
+      await sendPushToUser(order.customerId, "Order Schedule Shifted", scheduleMessage, {
+        url: `/client/order-tracking?orderId=${id}&id=${id}`,
+        type: "order",
+        orderId: id,
+      });
+    });
 
     return res.status(200).json({
       message: "Order completion schedule adjusted successfully.",
@@ -869,7 +948,8 @@ orderRouter.get("/orders/:id/invoice", async (req: Request, res: Response): Prom
     const craftsmanship = Number(q.tailoringCraftsmanshipCost);
     const embellishment = Number(q.embellishmentCost);
     const fitting = Number(q.fittingCost);
-    const subtotal = material + craftsmanship + embellishment + fitting;
+    const subtotal = quoteTotalAmount(q);
+    const paymentSummary = orderPaymentSummary(order, subtotal);
 
     // Standardized billing invoice calculations
     const taxRate = 0.05; // 5% VAT
@@ -881,7 +961,7 @@ orderRouter.get("/orders/:id/invoice", async (req: Request, res: Response): Prom
       issueDate: order.createdAt,
       dueDate: q.expectedCompletionDate,
       orderStatus: order.status,
-      paymentStatus: order.status === "CANCELLED" ? "CANCELLED" : "DEPOSIT_PAID",
+      paymentStatus: paymentSummary.paymentStatus,
       refundAmount: order.refundAmount ? Number(order.refundAmount) : 0,
       refundStatus: order.refundStatus || "N/A",
       designer: {
@@ -906,7 +986,12 @@ orderRouter.get("/orders/:id/invoice", async (req: Request, res: Response): Prom
         subtotal: Number(subtotal.toFixed(2)),
         taxRate: "5%",
         taxAmount: Number(taxAmount.toFixed(2)),
-        grandTotal: Number(grandTotal.toFixed(2))
+        grandTotal: Number(grandTotal.toFixed(2)),
+        depositRate: paymentSummary.depositRate,
+        depositAmount: paymentSummary.depositAmount,
+        amountPaid: paymentSummary.amountPaid,
+        paidAmount: paymentSummary.paidAmount,
+        amountDue: roundMoney(Math.max(0, grandTotal - paymentSummary.amountPaid))
       },
       terms: q.terms,
       depositNotes: q.depositNotes
@@ -970,6 +1055,7 @@ orderRouter.post("/orders/:id/cancel", async (req: Request, res: Response): Prom
     if (order.status === "CANCELLED") {
       return res.status(400).json({ error: "Order has already been cancelled." });
     }
+    const cancellationMessage = `Your order was cancelled by the designer. Reason: ${cancellationReason}`;
 
     const updated = await prisma.$transaction(async (tx) => {
       // Update order status and reason
@@ -996,7 +1082,7 @@ orderRouter.post("/orders/:id/cancel", async (req: Request, res: Response): Prom
           userId: order.customerId,
           type: "ORDERS",
           title: "Order Cancelled",
-          message: `Your order was cancelled by the designer. Reason: ${cancellationReason}`,
+          message: cancellationMessage,
           referenceId: id
         }
       });
@@ -1011,6 +1097,14 @@ orderRouter.post("/orders/:id/cancel", async (req: Request, res: Response): Prom
 
     invalidateResponseCache("orders:");
     invalidateResponseCache(`notifications:user:${order.customerId}`);
+    await emitNotificationCreated(order.customerId);
+    runInBackground("order.cancelled.push", async () => {
+      await sendPushToUser(order.customerId, "Order Cancelled", cancellationMessage, {
+        url: `/client/order-tracking?orderId=${id}&id=${id}`,
+        type: "order",
+        orderId: id,
+      });
+    });
 
     return res.status(200).json({
       message: "Order cancelled successfully.",
@@ -1080,6 +1174,7 @@ orderRouter.post("/orders/:id/refund", async (req: Request, res: Response): Prom
     if (order.refundStatus === "PROCESSED") {
       return res.status(400).json({ error: "Refund has already been processed for this order." });
     }
+    const refundMessage = `A refund of ${Number(refundAmount).toFixed(2)} has been processed for your order. Notes: ${notes || "None"}.`;
 
     const updated = await prisma.$transaction(async (tx) => {
       const orderUpdated = await tx.order.update({
@@ -1104,7 +1199,7 @@ orderRouter.post("/orders/:id/refund", async (req: Request, res: Response): Prom
           userId: order.customerId,
           type: "ORDERS",
           title: "Refund Processed",
-          message: `A refund of ${Number(refundAmount).toFixed(2)} has been processed for your order. Notes: ${notes || "None"}.`,
+          message: refundMessage,
           amount: refundAmount,
           referenceId: id
         }
@@ -1120,6 +1215,14 @@ orderRouter.post("/orders/:id/refund", async (req: Request, res: Response): Prom
 
     invalidateResponseCache("orders:");
     invalidateResponseCache(`notifications:user:${order.customerId}`);
+    await emitNotificationCreated(order.customerId);
+    runInBackground("order.refund.push", async () => {
+      await sendPushToUser(order.customerId, "Refund Processed", refundMessage, {
+        url: `/client/order-tracking?orderId=${id}&id=${id}`,
+        type: "order",
+        orderId: id,
+      });
+    });
 
     return res.status(200).json({
       message: "Refund processed successfully.",

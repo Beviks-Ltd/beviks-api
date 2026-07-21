@@ -2,6 +2,8 @@ import { Router, Request, Response } from "express";
 import { prisma } from "../db.js";
 import { cache } from "../utils/cache.js";
 import { sendPushToUser } from "../utils/push.js";
+import { runInBackground } from "../utils/asyncTasks.js";
+import { emitNotificationCreated } from "../utils/realtime.js";
 
 export const storePostRouter = Router();
 
@@ -656,20 +658,26 @@ storePostRouter.post("/:id/heart", async (req: Request, res: Response): Promise<
         where: { id: userId },
         select: { fullName: true }
       });
-      await prisma.notification.create({
-        data: {
-          userId: post.designerId,
-          type: "SOCIALS",
-          title: "Post Hearted",
-          message: `${liker?.fullName || "A user"} hearted your post.`,
-          referenceId: id
-        }
+      const notificationMessage = `${liker?.fullName || "A user"} hearted your post.`;
+      runInBackground("post.like.notifications", async () => {
+        await prisma.notification.create({
+          data: {
+            userId: post.designerId,
+            type: "SOCIALS",
+            title: "Post Hearted",
+            message: notificationMessage,
+            referenceId: id
+          }
+        });
+        cache.deletePattern(`notifications:user:${post.designerId}`);
+        await emitNotificationCreated(post.designerId);
+        await sendPushToUser(
+          post.designerId,
+          "Post Hearted",
+          notificationMessage,
+          { url: `/explore/post-details?id=${id}`, type: "post", postId: id }
+        );
       });
-      await sendPushToUser(
-        post.designerId,
-        "Post Hearted",
-        `${liker?.fullName || "A user"} hearted your post.`
-      );
     }
 
     cache.deletePattern("posts:list");
@@ -773,39 +781,51 @@ storePostRouter.post("/:id/comments", async (req: Request, res: Response): Promi
 
     // Notify post author (if comment was left by someone else)
     if (post.designerId !== userId) {
-      await prisma.notification.create({
-        data: {
-          userId: post.designerId,
-          type: "SOCIALS",
-          title: "New Comment on Post",
-          message: `${comment.user.fullName} commented on your post: "${content.slice(0, 30)}${content.length > 30 ? "..." : ""}"`,
-          referenceId: id
-        }
+      const notificationMessage = `${comment.user.fullName} commented on your post: "${content.slice(0, 30)}${content.length > 30 ? "..." : ""}"`;
+      runInBackground("post.comment.notifications", async () => {
+        await prisma.notification.create({
+          data: {
+            userId: post.designerId,
+            type: "SOCIALS",
+            title: "New Comment on Post",
+            message: notificationMessage,
+            referenceId: id
+          }
+        });
+        cache.deletePattern(`notifications:user:${post.designerId}`);
+        await emitNotificationCreated(post.designerId);
+        await sendPushToUser(
+          post.designerId,
+          "New Comment on Post",
+          notificationMessage,
+          { url: `/explore/post-details?id=${id}`, type: "post", postId: id }
+        );
       });
-      await sendPushToUser(
-        post.designerId,
-        "New Comment on Post",
-        `${comment.user.fullName} commented on your post: "${content.slice(0, 30)}${content.length > 30 ? "..." : ""}"`
-      );
     }
 
     // Notify parent comment author (if this is a nested reply and author is different)
     if (parentId) {
       if (parentComment && parentComment.userId !== userId) {
-        await prisma.notification.create({
-          data: {
-            userId: parentComment.userId,
-            type: "SOCIALS",
-            title: "New Reply on Comment",
-            message: `${comment.user.fullName} replied to your comment: "${content.slice(0, 30)}${content.length > 30 ? "..." : ""}"`,
-            referenceId: id
-          }
+        const notificationMessage = `${comment.user.fullName} replied to your comment: "${content.slice(0, 30)}${content.length > 30 ? "..." : ""}"`;
+        runInBackground("post.comment-reply.notifications", async () => {
+          await prisma.notification.create({
+            data: {
+              userId: parentComment.userId,
+              type: "SOCIALS",
+              title: "New Reply on Comment",
+              message: notificationMessage,
+              referenceId: id
+            }
+          });
+          cache.deletePattern(`notifications:user:${parentComment.userId}`);
+          await emitNotificationCreated(parentComment.userId);
+          await sendPushToUser(
+            parentComment.userId,
+            "New Reply on Comment",
+            notificationMessage,
+            { url: `/explore/post-details?id=${id}`, type: "post", postId: id, commentId: parentComment.id }
+          );
         });
-        await sendPushToUser(
-          parentComment.userId,
-          "New Reply on Comment",
-          `${comment.user.fullName} replied to your comment: "${content.slice(0, 30)}${content.length > 30 ? "..." : ""}"`
-        );
       }
     }
 
@@ -864,37 +884,49 @@ storePostRouter.post("/comments/:id/replies", async (req: Request, res: Response
     });
 
     if (post.designerId !== userId) {
-      await prisma.notification.create({
-        data: {
-          userId: post.designerId,
-          type: "SOCIALS",
-          title: "New Comment on Post",
-          message: `${comment.user.fullName} commented on your post: "${content.slice(0, 30)}${content.length > 30 ? "..." : ""}"`,
-          referenceId: parentComment.postId
-        }
+      const notificationMessage = `${comment.user.fullName} commented on your post: "${content.slice(0, 30)}${content.length > 30 ? "..." : ""}"`;
+      runInBackground("post.reply-post-author.notifications", async () => {
+        await prisma.notification.create({
+          data: {
+            userId: post.designerId,
+            type: "SOCIALS",
+            title: "New Comment on Post",
+            message: notificationMessage,
+            referenceId: parentComment.postId
+          }
+        });
+        cache.deletePattern(`notifications:user:${post.designerId}`);
+        await emitNotificationCreated(post.designerId);
+        await sendPushToUser(
+          post.designerId,
+          "New Comment on Post",
+          notificationMessage,
+          { url: `/explore/post-details?id=${parentComment.postId}`, type: "post", postId: parentComment.postId }
+        );
       });
-      await sendPushToUser(
-        post.designerId,
-        "New Comment on Post",
-        `${comment.user.fullName} commented on your post: "${content.slice(0, 30)}${content.length > 30 ? "..." : ""}"`
-      );
     }
 
     if (parentComment.userId !== userId) {
-      await prisma.notification.create({
-        data: {
-          userId: parentComment.userId,
-          type: "SOCIALS",
-          title: "New Reply on Comment",
-          message: `${comment.user.fullName} replied to your comment: "${content.slice(0, 30)}${content.length > 30 ? "..." : ""}"`,
-          referenceId: parentComment.postId
-        }
+      const notificationMessage = `${comment.user.fullName} replied to your comment: "${content.slice(0, 30)}${content.length > 30 ? "..." : ""}"`;
+      runInBackground("post.reply-comment-author.notifications", async () => {
+        await prisma.notification.create({
+          data: {
+            userId: parentComment.userId,
+            type: "SOCIALS",
+            title: "New Reply on Comment",
+            message: notificationMessage,
+            referenceId: parentComment.postId
+          }
+        });
+        cache.deletePattern(`notifications:user:${parentComment.userId}`);
+        await emitNotificationCreated(parentComment.userId);
+        await sendPushToUser(
+          parentComment.userId,
+          "New Reply on Comment",
+          notificationMessage,
+          { url: `/explore/post-details?id=${parentComment.postId}`, type: "post", postId: parentComment.postId, commentId: parentComment.id }
+        );
       });
-      await sendPushToUser(
-        parentComment.userId,
-        "New Reply on Comment",
-        `${comment.user.fullName} replied to your comment: "${content.slice(0, 30)}${content.length > 30 ? "..." : ""}"`
-      );
     }
 
     cache.deletePattern("posts:list");

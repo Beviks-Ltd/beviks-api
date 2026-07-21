@@ -17,6 +17,8 @@ type UncachedJson = {
   data: any;
 };
 
+const inFlightLoads = new Map<string, Promise<any>>();
+
 function makeEtag(data: any): string {
   const hash = createHash("sha1").update(JSON.stringify(data)).digest("hex");
   return `"${hash}"`;
@@ -42,7 +44,15 @@ export async function sendCachedJson(
     return res.status(options.status || 200).json(cached.data);
   }
 
-  const data = await loader();
+  let pending = inFlightLoads.get(key);
+  if (!pending) {
+    pending = loader().finally(() => {
+      inFlightLoads.delete(key);
+    });
+    inFlightLoads.set(key, pending);
+  }
+
+  const data = await pending;
   if (
     data &&
     typeof data === "object" &&

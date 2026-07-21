@@ -3,6 +3,8 @@ import { prisma } from "../db.js";
 import { sendPushToUser } from "../utils/push.js";
 import { buildBeviksEmailHtml, sendEmail } from "../utils/email.js";
 import { invalidateResponseCache, sendCachedJson, uncachedJson } from "../utils/responseCache.js";
+import { runInBackground } from "../utils/asyncTasks.js";
+import { emitNotificationCreated } from "../utils/realtime.js";
 
 export const quotationRouter = Router();
 
@@ -16,6 +18,10 @@ function quotationTotal(quotation: {
     Number(quotation.tailoringCraftsmanshipCost) +
     Number(quotation.embellishmentCost) +
     Number(quotation.fittingCost);
+}
+
+function briefReason(reason: string, maxLength = 120) {
+  return reason.length > maxLength ? `${reason.slice(0, maxLength - 3)}...` : reason;
 }
 
 async function sendQuotationEmail({
@@ -221,37 +227,41 @@ quotationRouter.post("/inquiries/:inquiryId/quotation", async (req: Request, res
     const totalCost = quotationTotal(quotation);
     const designerName = inquiry.designer?.store?.name || inquiry.designer?.fullName || "Your Beviks designer";
     const quoteUrl = `beviksmobile://designer/quote-acceptance?quotationId=${quotation.id}`;
-
-    // Create notification for Customer
-    await prisma.notification.create({
-      data: {
-        userId: inquiry.customerId,
-        type: "ORDERS",
-        title: "New Quotation Received",
-        message: `Designer has submitted a quote totaling ${totalCost.toFixed(2)} for your inquiry on piece '${inquiry.piece.name}'.`,
-        amount: totalCost,
-        referenceId: quotation.id
-      }
-    });
-
-    await sendPushToUser(
-      inquiry.customerId,
-      "New Quotation Received",
-      `Designer has submitted a quote totaling ${totalCost.toFixed(2)} for your inquiry on piece '${inquiry.piece.name}'.`
-    );
-
-    await sendQuotationEmail({
-      to: inquiry.customer?.email,
-      userName: inquiry.customer?.fullName,
-      title: "New Quotation Received",
-      bodyText: `${designerName} has sent a quote totaling ${totalCost.toFixed(2)} for '${inquiry.piece.name}'. Review it in Beviks to accept, decline, or message the designer.`,
-      buttonText: "VIEW QUOTATION",
-      buttonUrl: quoteUrl,
-    });
+    const notificationMessage = `Designer has submitted a quote totaling ${totalCost.toFixed(2)} for your inquiry on piece '${inquiry.piece.name}'.`;
 
     invalidateResponseCache("quotations:");
     invalidateResponseCache("inquiries:");
-    invalidateResponseCache(`notifications:user:${inquiry.customerId}`);
+
+    runInBackground("quotation.created.notifications", async () => {
+      await prisma.notification.create({
+        data: {
+          userId: inquiry.customerId,
+          type: "ORDERS",
+          title: "New Quotation Received",
+          message: notificationMessage,
+          amount: totalCost,
+          referenceId: quotation.id
+        }
+      });
+      invalidateResponseCache(`notifications:user:${inquiry.customerId}`);
+      await emitNotificationCreated(inquiry.customerId);
+
+      await sendPushToUser(
+        inquiry.customerId,
+        "New Quotation Received",
+        notificationMessage,
+        { url: `/designer/quote-acceptance?quotationId=${quotation.id}`, type: "quotation", quotationId: quotation.id }
+      );
+
+      await sendQuotationEmail({
+        to: inquiry.customer?.email,
+        userName: inquiry.customer?.fullName,
+        title: "New Quotation Received",
+        bodyText: `${designerName} has sent a quote totaling ${totalCost.toFixed(2)} for '${inquiry.piece.name}'. Review it in Beviks to accept, decline, or message the designer.`,
+        buttonText: "VIEW QUOTATION",
+        buttonUrl: quoteUrl,
+      });
+    });
 
     return res.status(201).json(quotation);
   } catch (error: any) {
@@ -425,7 +435,8 @@ quotationRouter.put("/quotations/:id", async (req: Request, res: Response): Prom
           expectedCompletionDate: new Date(expectedCompletionDate),
           terms,
           depositNotes,
-          status: "PENDING"
+          status: "PENDING",
+          rejectionReason: null
         },
         include: {
           order: true,
@@ -445,37 +456,46 @@ quotationRouter.put("/quotations/:id", async (req: Request, res: Response): Prom
         data: { status: "QUOTED" }
       });
 
-      await tx.notification.create({
-        data: {
-          userId: updated.inquiry.customerId,
-          type: "ORDERS",
-          title: "Quotation Updated",
-          message: `${updated.inquiry.designer.store?.name || updated.inquiry.designer.fullName} updated the quote for ${updated.inquiry.piece.name}.`,
-          amount: quotationTotal(updated),
-          referenceId: updated.id
-        }
-      });
-
       return updated;
     });
 
     const totalQuoteAmount = quotationTotal(updatedQuotation);
     const designerName = updatedQuotation.inquiry.designer.store?.name || updatedQuotation.inquiry.designer.fullName || "Designer";
     const quoteUrl = `beviksmobile://designer/quote-acceptance?quotationId=${encodeURIComponent(updatedQuotation.id)}`;
-
-    await sendPushToUser(updatedQuotation.inquiry.customerId, "Quotation Updated", `${designerName} updated the quote for ${updatedQuotation.inquiry.piece.name}.`);
-    await sendQuotationEmail({
-      to: updatedQuotation.inquiry.customer.email,
-      userName: updatedQuotation.inquiry.customer.fullName,
-      title: "Quotation Updated",
-      bodyText: `${designerName} updated your quotation totaling ${totalQuoteAmount.toFixed(2)} for '${updatedQuotation.inquiry.piece.name}'. Review it in Beviks to accept, decline, or message the designer.`,
-      buttonText: "VIEW QUOTATION",
-      buttonUrl: quoteUrl,
-    });
+    const notificationMessage = `${designerName} updated the quote for ${updatedQuotation.inquiry.piece.name}.`;
 
     invalidateResponseCache("quotations:");
     invalidateResponseCache("inquiries:");
-    invalidateResponseCache(`notifications:user:${updatedQuotation.inquiry.customerId}`);
+
+    runInBackground("quotation.updated.notifications", async () => {
+      await prisma.notification.create({
+        data: {
+          userId: updatedQuotation.inquiry.customerId,
+          type: "ORDERS",
+          title: "Quotation Updated",
+          message: notificationMessage,
+          amount: totalQuoteAmount,
+          referenceId: updatedQuotation.id
+        }
+      });
+      invalidateResponseCache(`notifications:user:${updatedQuotation.inquiry.customerId}`);
+      await emitNotificationCreated(updatedQuotation.inquiry.customerId);
+
+      await sendPushToUser(
+        updatedQuotation.inquiry.customerId,
+        "Quotation Updated",
+        notificationMessage,
+        { url: `/designer/quote-acceptance?quotationId=${updatedQuotation.id}`, type: "quotation", quotationId: updatedQuotation.id }
+      );
+      await sendQuotationEmail({
+        to: updatedQuotation.inquiry.customer.email,
+        userName: updatedQuotation.inquiry.customer.fullName,
+        title: "Quotation Updated",
+        bodyText: `${designerName} updated your quotation totaling ${totalQuoteAmount.toFixed(2)} for '${updatedQuotation.inquiry.piece.name}'. Review it in Beviks to accept, decline, or message the designer.`,
+        buttonText: "VIEW QUOTATION",
+        buttonUrl: quoteUrl,
+      });
+    });
 
     return res.status(200).json({
       message: "Quotation updated and resent successfully.",
@@ -520,13 +540,20 @@ quotationRouter.post("/quotations/:id/accept", async (req: Request, res: Respons
 
     const quotation = await prisma.quotation.findUnique({
       where: { id },
-      include: {
+      select: {
+        id: true,
+        inquiryId: true,
+        status: true,
+        materialFabricCost: true,
+        tailoringCraftsmanshipCost: true,
+        embellishmentCost: true,
+        fittingCost: true,
+        depositNotes: true,
         order: true,
         inquiry: {
-          include: {
-            customer: { select: { id: true, fullName: true, email: true } },
-            designer: { select: { id: true, fullName: true, email: true, store: { select: { name: true } } } },
-            piece: { select: { id: true, name: true, primaryImageUrl: true } }
+          select: {
+            designerId: true,
+            customerId: true,
           }
         }
       }
@@ -545,7 +572,6 @@ quotationRouter.post("/quotations/:id/accept", async (req: Request, res: Respons
       const updatedQuotation = await tx.quotation.update({
         where: { id },
         data: { status: "ACCEPTED" },
-        include: { inquiry: true }
       });
 
       await tx.quoteInquiry.update({
@@ -574,42 +600,63 @@ quotationRouter.post("/quotations/:id/accept", async (req: Request, res: Respons
         }
       });
 
-      // Create notification for Designer
-      await tx.notification.create({
-        data: {
-          userId: quotation.inquiry.designerId,
-          type: "ORDERS",
-          title: "Quotation Approved",
-          message: `Customer has accepted your quote totaling ${totalQuoteCost.toFixed(2)}. An active order has been generated.`,
-          amount: totalQuoteCost,
-          referenceId: order.id
-        }
-      });
-
       return { quotation: updatedQuotation, order };
     });
 
     const totalQuoteCost = quotationTotal(quotation);
-    const customerName = quotation.inquiry.customer?.fullName || "A Beviks client";
-    await sendPushToUser(
-      quotation.inquiry.designerId,
-      "Quotation Approved",
-      `${customerName} accepted your quote totaling ${totalQuoteCost.toFixed(2)}.`
-    );
-
-    await sendQuotationEmail({
-      to: quotation.inquiry.designer?.email,
-      userName: quotation.inquiry.designer?.fullName,
-      title: "Quotation Approved",
-      bodyText: `${customerName} accepted your quote totaling ${totalQuoteCost.toFixed(2)} for '${quotation.inquiry.piece?.name || "their Beviks piece"}'. An active order has been created.`,
-      buttonText: "VIEW ORDER",
-      buttonUrl: `beviksmobile://designer/order-details?id=${result.order.id}`,
-    });
+    const notificationMessage = `Customer has accepted your quote totaling ${totalQuoteCost.toFixed(2)}. An active order has been generated.`;
 
     invalidateResponseCache("quotations:");
     invalidateResponseCache("inquiries:");
     invalidateResponseCache("orders:");
-    invalidateResponseCache(`notifications:user:${quotation.inquiry.designerId}`);
+
+    runInBackground("quotation.accepted.notifications", async () => {
+      const notificationQuotation = await prisma.quotation.findUnique({
+        where: { id },
+        select: {
+          inquiry: {
+            select: {
+              designerId: true,
+              customer: { select: { fullName: true } },
+              designer: { select: { email: true, fullName: true } },
+              piece: { select: { name: true } }
+            }
+          }
+        }
+      });
+      const notificationInquiry = notificationQuotation?.inquiry;
+      if (!notificationInquiry) return;
+      const customerName = notificationInquiry.customer?.fullName || "A Beviks client";
+
+      await prisma.notification.create({
+        data: {
+          userId: notificationInquiry.designerId,
+          type: "ORDERS",
+          title: "Quotation Approved",
+          message: notificationMessage,
+          amount: totalQuoteCost,
+          referenceId: result.order.id
+        }
+      });
+      invalidateResponseCache(`notifications:user:${notificationInquiry.designerId}`);
+      await emitNotificationCreated(notificationInquiry.designerId);
+
+      await sendPushToUser(
+        notificationInquiry.designerId,
+        "Quotation Approved",
+        `${customerName} accepted your quote totaling ${totalQuoteCost.toFixed(2)}.`,
+        { url: `/designer/order-details?id=${result.order.id}`, type: "order", orderId: result.order.id }
+      );
+
+      await sendQuotationEmail({
+        to: notificationInquiry.designer?.email,
+        userName: notificationInquiry.designer?.fullName,
+        title: "Quotation Approved",
+        bodyText: `${customerName} accepted your quote totaling ${totalQuoteCost.toFixed(2)} for '${notificationInquiry.piece?.name || "their Beviks piece"}'. An active order has been created.`,
+        buttonText: "VIEW ORDER",
+        buttonUrl: `beviksmobile://designer/order-details?id=${result.order.id}`,
+      });
+    });
 
     return res.status(200).json({
       message: "Quotation accepted successfully. Active order generated.",
@@ -644,15 +691,29 @@ quotationRouter.post("/quotations/:id/accept", async (req: Request, res: Respons
 quotationRouter.post("/quotations/:id/reject", async (req: Request, res: Response): Promise<any> => {
   try {
     const id = req.params.id as string;
+    const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+
+    if (!reason) {
+      return res.status(400).json({ error: "Decline reason is required." });
+    }
+
+    if (reason.length > 240) {
+      return res.status(400).json({ error: "Decline reason must be 240 characters or less." });
+    }
 
     const quotation = await prisma.quotation.findUnique({
       where: { id },
-      include: {
+      select: {
+        id: true,
+        inquiryId: true,
+        status: true,
+        materialFabricCost: true,
+        tailoringCraftsmanshipCost: true,
+        embellishmentCost: true,
+        fittingCost: true,
         inquiry: {
-          include: {
-            customer: { select: { id: true, fullName: true, email: true } },
-            designer: { select: { id: true, fullName: true, email: true, store: { select: { name: true } } } },
-            piece: { select: { id: true, name: true, primaryImageUrl: true } }
+          select: {
+            designerId: true,
           }
         }
       }
@@ -669,7 +730,7 @@ quotationRouter.post("/quotations/:id/reject", async (req: Request, res: Respons
     const updatedQuotation = await prisma.$transaction(async (tx) => {
       const updated = await tx.quotation.update({
         where: { id },
-        data: { status: "REJECTED" }
+        data: { status: "REJECTED", rejectionReason: reason }
       });
 
       await tx.quoteInquiry.update({
@@ -677,43 +738,63 @@ quotationRouter.post("/quotations/:id/reject", async (req: Request, res: Respons
         data: { status: "REJECTED" }
       });
 
-      const totalQuoteCost = quotationTotal(quotation);
-
-      // Create notification for Designer
-      await tx.notification.create({
-        data: {
-          userId: quotation.inquiry.designerId,
-          type: "ORDERS",
-          title: "Quotation Rejected",
-          message: `Customer has rejected your quote totaling ${totalQuoteCost.toFixed(2)}.`,
-          amount: totalQuoteCost,
-          referenceId: quotation.id
-        }
-      });
-
       return updated;
     });
 
     const totalQuoteCost = quotationTotal(quotation);
-    const customerName = quotation.inquiry.customer?.fullName || "A Beviks client";
-    await sendPushToUser(
-      quotation.inquiry.designerId,
-      "Quotation Rejected",
-      `${customerName} declined your quote totaling ${totalQuoteCost.toFixed(2)}.`
-    );
-
-    await sendQuotationEmail({
-      to: quotation.inquiry.designer?.email,
-      userName: quotation.inquiry.designer?.fullName,
-      title: "Quotation Rejected",
-      bodyText: `${customerName} declined your quote totaling ${totalQuoteCost.toFixed(2)} for '${quotation.inquiry.piece?.name || "their Beviks piece"}'. You can edit and resend the quotation from Beviks.`,
-      buttonText: "EDIT AND RESEND",
-      buttonUrl: `beviksmobile://designer/create-quote?quotationId=${quotation.id}`,
-    });
+    const reasonBrief = briefReason(reason, 100);
+    const notificationMessage = `Customer rejected your quote totaling ${totalQuoteCost.toFixed(2)}. Reason: ${reasonBrief}`;
 
     invalidateResponseCache("quotations:");
     invalidateResponseCache("inquiries:");
-    invalidateResponseCache(`notifications:user:${quotation.inquiry.designerId}`);
+
+    runInBackground("quotation.rejected.notifications", async () => {
+      const notificationQuotation = await prisma.quotation.findUnique({
+        where: { id },
+        select: {
+          inquiry: {
+            select: {
+              designerId: true,
+              customer: { select: { fullName: true } },
+              designer: { select: { email: true, fullName: true } },
+              piece: { select: { name: true } }
+            }
+          }
+        }
+      });
+      const notificationInquiry = notificationQuotation?.inquiry;
+      if (!notificationInquiry) return;
+      const customerName = notificationInquiry.customer?.fullName || "A Beviks client";
+
+      await prisma.notification.create({
+        data: {
+          userId: notificationInquiry.designerId,
+          type: "ORDERS",
+          title: "Quotation Rejected",
+          message: notificationMessage,
+          amount: totalQuoteCost,
+          referenceId: quotation.id
+        }
+      });
+      invalidateResponseCache(`notifications:user:${notificationInquiry.designerId}`);
+      await emitNotificationCreated(notificationInquiry.designerId);
+
+      await sendPushToUser(
+        notificationInquiry.designerId,
+        "Quotation Rejected",
+        `${customerName} declined your quote. Reason: ${reasonBrief}`,
+        { url: `/designer/create-quote?quotationId=${quotation.id}`, type: "quotation", quotationId: quotation.id }
+      );
+
+      await sendQuotationEmail({
+        to: notificationInquiry.designer?.email,
+        userName: notificationInquiry.designer?.fullName,
+        title: "Quotation Rejected",
+        bodyText: `${customerName} declined your quote totaling ${totalQuoteCost.toFixed(2)} for '${notificationInquiry.piece?.name || "their Beviks piece"}'. Reason: ${reasonBrief}. You can edit and resend the quotation from Beviks.`,
+        buttonText: "EDIT AND RESEND",
+        buttonUrl: `beviksmobile://designer/create-quote?quotationId=${quotation.id}`,
+      });
+    });
 
     return res.status(200).json({
       message: "Quotation rejected successfully.",

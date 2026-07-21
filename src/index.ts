@@ -4,6 +4,7 @@ import { app } from "./server.js";
 import { prisma } from "./db.js";
 import { startWeeklyAccountCleanupCron } from "./utils/cron.js";
 import { invalidateResponseCache } from "./utils/responseCache.js";
+import { setRealtimeServer, userNotificationRoom } from "./utils/realtime.js";
 
 // Initialize Weekly Account Cleanup Cron Job
 startWeeklyAccountCleanupCron();
@@ -18,6 +19,7 @@ const io = new Server(server, {
     methods: ["GET", "POST"]
   }
 });
+setRealtimeServer(io);
 
 const onlineUsers = new Map<string, string>();
 
@@ -27,6 +29,7 @@ io.on("connection", (socket) => {
   socket.on("user_online", (data: { userId: string }) => {
     if (!data?.userId) return;
     onlineUsers.set(data.userId, socket.id);
+    socket.join(userNotificationRoom(data.userId));
     io.emit("online_users", Array.from(onlineUsers.keys()));
     console.log(`[Socket Online] User ${data.userId} is online`);
   });

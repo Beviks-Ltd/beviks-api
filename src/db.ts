@@ -3,14 +3,28 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import "dotenv/config";
 
+function getPgSslConfig() {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) return undefined;
+
+  try {
+    const sslmode = new URL(databaseUrl).searchParams.get("sslmode");
+    if (sslmode === "disable") return false;
+    if (sslmode === "verify-full") return { rejectUnauthorized: true };
+    if (sslmode === "require") return { rejectUnauthorized: false };
+  } catch {
+    return { rejectUnauthorized: false };
+  }
+
+  return undefined;
+}
+
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
   max: Number(process.env.DB_POOL_MAX || 10),
   idleTimeoutMillis: Number(process.env.DB_IDLE_TIMEOUT_MS || 30000),
   connectionTimeoutMillis: Number(process.env.DB_CONNECTION_TIMEOUT_MS || 10000),
-  ssl: {
-    rejectUnauthorized: false // Required for Neon secure serverless DB connection
-  }
+  ssl: getPgSslConfig()
 });
 
 const adapter = new PrismaPg(pool);

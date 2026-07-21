@@ -33,6 +33,78 @@ function generateVerificationToken(email: string) {
   return jwt.sign({ email }, JWT_SECRET, { expiresIn: "1d" });
 }
 
+type GoogleProfile = {
+  sub: string;
+  email: string;
+  email_verified?: boolean | string;
+  name?: string;
+  picture?: string;
+  aud?: string;
+};
+
+function getAllowedGoogleClientIds() {
+  return [
+    process.env.GOOGLE_WEB_CLIENT_ID,
+    process.env.GOOGLE_IOS_CLIENT_ID,
+    process.env.GOOGLE_ANDROID_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_ID,
+  ].filter(Boolean) as string[];
+}
+
+function formatAuthUser(user: any) {
+  return {
+    id: user.id,
+    email: user.email,
+    fullName: user.fullName,
+    phoneNumber: user.phoneNumber,
+    gender: user.gender,
+    dateOfBirth: user.dateOfBirth,
+    role: user.role,
+    isEmailVerified: user.isEmailVerified,
+    isIdentityVerified: user.designerProfile?.isIdentityVerified || false,
+    profileImageUrl: user.profileImageUrl,
+    createdAt: user.createdAt
+  };
+}
+
+function hasCompletedBaseProfile(user: any) {
+  return Boolean(user.phoneNumber && user.gender && user.dateOfBirth);
+}
+
+async function fetchGoogleProfile({ idToken, accessToken }: { idToken?: string; accessToken?: string }): Promise<GoogleProfile> {
+  if (idToken) {
+    const tokenInfoUrl = `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`;
+    const tokenInfoResponse = await fetch(tokenInfoUrl);
+    const tokenInfo = await tokenInfoResponse.json().catch(() => null);
+
+    if (!tokenInfoResponse.ok || !tokenInfo?.sub || !tokenInfo?.email) {
+      throw new Error(tokenInfo?.error_description || "Invalid Google identity token.");
+    }
+
+    const allowedClientIds = getAllowedGoogleClientIds();
+    if (allowedClientIds.length > 0 && tokenInfo.aud && !allowedClientIds.includes(tokenInfo.aud)) {
+      throw new Error("Google token audience is not allowed for this API.");
+    }
+
+    return tokenInfo;
+  }
+
+  if (accessToken) {
+    const userInfoResponse = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const userInfo = await userInfoResponse.json().catch(() => null);
+
+    if (!userInfoResponse.ok || !userInfo?.sub || !userInfo?.email) {
+      throw new Error(userInfo?.error_description || "Invalid Google access token.");
+    }
+
+    return userInfo;
+  }
+
+  throw new Error("Missing Google token.");
+}
+
 /**
  * @openapi
  * components:
@@ -442,6 +514,79 @@ authRouter.post("/register/social", async (req: Request, res: Response): Promise
   } catch (error: any) {
     console.error("Social registration error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+authRouter.post("/google", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const { idToken, accessToken, role } = req.body;
+    const requestedRole = role === "DESIGNER" ? "DESIGNER" : role === "CUSTOMER" ? "CUSTOMER" : undefined;
+    const googleProfile = await fetchGoogleProfile({ idToken, accessToken });
+
+    if (googleProfile.email_verified === false || googleProfile.email_verified === "false") {
+      return res.status(400).json({ error: "Google email is not verified." });
+    }
+
+    const email = String(googleProfile.email).toLowerCase();
+    let user = await prisma.user.findUnique({
+      where: { email },
+      include: { designerProfile: true }
+    });
+    let isNewUser = false;
+
+    if (user) {
+      if (user.socialProvider && user.socialProvider !== "GOOGLE") {
+        return res.status(400).json({ error: "This email is already linked to another social provider." });
+      }
+
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          socialProvider: "GOOGLE",
+          socialId: googleProfile.sub,
+          isEmailVerified: true,
+          isDeleted: false,
+          deletedAt: null,
+          ...(googleProfile.picture && !user.profileImageUrl ? { profileImageUrl: googleProfile.picture } : {}),
+        },
+        include: { designerProfile: true }
+      });
+    } else {
+      if (!requestedRole) {
+        return res.status(400).json({ error: "Role is required for new Google registrations." });
+      }
+
+      user = await prisma.user.create({
+        data: {
+          fullName: googleProfile.name || email.split("@")[0],
+          email,
+          socialProvider: "GOOGLE",
+          socialId: googleProfile.sub,
+          role: requestedRole as any,
+          isEmailVerified: true,
+          profileImageUrl: googleProfile.picture || null,
+        },
+        include: { designerProfile: true }
+      });
+      isNewUser = true;
+    }
+
+    const token = generateToken(user);
+    const requiresProfile = !hasCompletedBaseProfile(user);
+    const requiresIdentity = user.role === "DESIGNER" && !user.designerProfile;
+
+    return res.status(isNewUser ? 201 : 200).json({
+      message: isNewUser ? "Google registration initialized." : "Google login successful.",
+      user: formatAuthUser(user),
+      token,
+      isNewUser,
+      requiresProfile,
+      requiresIdentity,
+      nextStep: requiresProfile ? "PROFILE" : requiresIdentity ? "IDENTITY" : "HOME"
+    });
+  } catch (error: any) {
+    console.error("Google auth error:", error);
+    return res.status(400).json({ error: error?.message || "Google authentication failed." });
   }
 });
 

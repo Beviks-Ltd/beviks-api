@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { prisma } from "../db.js";
 import { invalidateResponseCache, sendCachedJson } from "../utils/responseCache.js";
+import { emitNotificationCount } from "../utils/realtime.js";
 
 export const notificationRouter = Router();
 
@@ -109,6 +110,23 @@ async function getUserNotifications(req: Request, res: Response): Promise<any> {
 notificationRouter.get("/notifications/user/:userId", getUserNotifications);
 notificationRouter.get("/user/:userId", getUserNotifications);
 
+notificationRouter.get("/notifications/user/:userId/count", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const userId = req.params.userId as string;
+
+    return sendCachedJson(req, res, `notifications:user:${userId}:count`, 5000, async () => {
+      const unreadCount = await prisma.notification.count({
+        where: { userId, isRead: false }
+      });
+
+      return { userId, unreadCount };
+    });
+  } catch (error: any) {
+    console.error("Get notification count error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 /**
  * @openapi
  * /api/notifications/{id}/read:
@@ -143,6 +161,7 @@ notificationRouter.post("/notifications/:id/read", async (req: Request, res: Res
     });
 
     invalidateResponseCache(`notifications:user:${updated.userId}`);
+    await emitNotificationCount(updated.userId);
 
     return res.status(200).json({
       message: "Notification marked as read successfully.",
@@ -191,6 +210,7 @@ notificationRouter.post("/notifications/user/:userId/read-all", async (req: Requ
     });
 
     invalidateResponseCache(`notifications:user:${userId}`);
+    await emitNotificationCount(userId);
 
     return res.status(200).json({
       message: `Successfully marked all unread notifications as read.`,

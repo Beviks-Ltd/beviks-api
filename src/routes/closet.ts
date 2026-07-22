@@ -41,9 +41,10 @@ export const closetRouter = Router();
  *                   quotation:
  *                     $ref: '#/components/schemas/QuotationResponse'
  */
-closetRouter.get("/user/:userId", async (req: Request, res: Response): Promise<any> => {
+closetRouter.get(["/user/:userId", "/closets/user/:userId"], async (req: Request, res: Response): Promise<any> => {
   try {
     const userId = req.params.userId as string;
+    res.set("Cache-Control", "no-store");
 
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) {

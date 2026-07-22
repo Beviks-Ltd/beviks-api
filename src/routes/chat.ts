@@ -253,6 +253,41 @@ chatRouter.get("/chats/room/:roomId/messages", async (req: Request, res: Respons
   }
 });
 
+chatRouter.delete("/chats/room/:roomId", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const roomId = req.params.roomId as string;
+    const userId = req.query.userId as string | undefined;
+
+    if (!userId) {
+      return res.status(400).json({ error: "userId is required to delete a conversation." });
+    }
+
+    const room = await prisma.chatRoom.findUnique({
+      where: { id: roomId },
+      select: { id: true, user1Id: true, user2Id: true }
+    });
+
+    if (!room) {
+      return res.status(404).json({ error: "Conversation not found." });
+    }
+
+    if (room.user1Id !== userId && room.user2Id !== userId) {
+      return res.status(403).json({ error: "You can only delete your own conversations." });
+    }
+
+    await prisma.chatRoom.delete({ where: { id: roomId } });
+
+    invalidateResponseCache(`chats:user:${room.user1Id}`);
+    invalidateResponseCache(`chats:user:${room.user2Id}`);
+    invalidateResponseCache(`chats:room:${roomId}:messages`);
+
+    return res.status(200).json({ message: "Conversation deleted successfully." });
+  } catch (error: any) {
+    console.error("Delete conversation error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 /**
  * @openapi
  * /api/messages/{id}:

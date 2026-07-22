@@ -157,6 +157,9 @@ inquiryRouter.post("/inquiries", async (req: Request, res: Response): Promise<an
       material,
       inspirationImages
     } = req.body;
+    const inspirationImageUrls = Array.isArray(inspirationImages)
+      ? inspirationImages.filter((url: any): url is string => typeof url === "string" && url.trim().length > 0)
+      : [];
 
     if ((!pieceId && !designerId) || !customerId || budget === undefined) {
       return res.status(400).json({ error: "pieceId or designerId, customerId, and budget are required parameters." });
@@ -181,12 +184,21 @@ inquiryRouter.post("/inquiries", async (req: Request, res: Response): Promise<an
           name: pieceName || "Custom Beviks Request",
           description: specialInstructions || "Custom quote request from a client.",
           price: budget,
-          primaryImageUrl: pieceImageUrl || "https://images.unsplash.com/photo-1595777457583-95e059d581b8?w=600&auto=format&fit=crop&q=80",
+          primaryImageUrl: inspirationImageUrls[0] || pieceImageUrl || "",
           category: "CUSTOM",
           heritage: "Custom",
-          status: "DRAFT"
+          status: "DRAFT",
+          images: {
+            create: (inspirationImageUrls.length > 0
+              ? inspirationImageUrls
+              : [pieceImageUrl].filter(Boolean)
+            ).map((url: string, index: number) => ({
+              url,
+              order: index
+            }))
+          }
         },
-        include: { store: true }
+        include: { store: true, images: { orderBy: { order: "asc" } } }
       });
     }
 
@@ -217,19 +229,34 @@ inquiryRouter.post("/inquiries", async (req: Request, res: Response): Promise<an
         colorPalette: colorPalette || [],
         material,
         inspirations: {
-          create: inspirationImages ? inspirationImages.map((url: string) => ({
+          create: inspirationImageUrls.map((url: string) => ({
             url
-          })) : []
+          }))
         }
       },
       include: {
         inspirations: true,
         customer: { select: { id: true, fullName: true, profileImageUrl: true } },
-        piece: { select: { id: true, name: true, primaryImageUrl: true } }
+        designer: { select: { id: true, fullName: true, email: true } },
+        piece: {
+          include: {
+            images: { orderBy: { order: "asc" } }
+          }
+        },
+        quotation: {
+          include: {
+            order: {
+              include: {
+                timeline: { orderBy: { createdAt: "asc" } }
+              }
+            }
+          }
+        }
       }
     });
 
     invalidateResponseCache("inquiries:");
+    invalidateResponseCache(`closets:user:${customerId}`);
 
     return res.status(201).json(inquiry);
   } catch (error: any) {

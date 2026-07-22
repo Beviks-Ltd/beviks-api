@@ -191,6 +191,14 @@ storeRouter.get("/my-store", async (req: Request, res: Response): Promise<any> =
       const store = await prisma.store.findUnique({
         where: { designerId },
         include: {
+          designer: {
+            select: {
+              id: true,
+              fullName: true,
+              profileImageUrl: true,
+              email: true
+            }
+          },
           pieces: {
             include: { images: { orderBy: { order: "asc" } },
             },
@@ -270,7 +278,7 @@ storeRouter.get("/my-store", async (req: Request, res: Response): Promise<any> =
  */
 storeRouter.put("/my-store", async (req: Request, res: Response): Promise<any> => {
   try {
-    const { designerId, name, description, logoUrl, coverUrl } = req.body;
+    const { designerId, name, description, logoUrl, coverUrl, status } = req.body;
 
     if (!designerId) {
       return res.status(400).json({ error: "designerId parameter is required." });
@@ -286,6 +294,12 @@ storeRouter.put("/my-store", async (req: Request, res: Response): Promise<any> =
     if (description !== undefined) updateData.description = description;
     if (logoUrl !== undefined) updateData.logoUrl = logoUrl;
     if (coverUrl !== undefined) updateData.coverUrl = coverUrl;
+    if (status !== undefined) {
+      if (!["PENDING_VERIFICATION", "VERIFIED", "PRIVATE"].includes(status)) {
+        return res.status(400).json({ error: "Invalid store status." });
+      }
+      updateData.status = status;
+    }
 
     const updatedStore = await prisma.store.update({
       where: { designerId },
@@ -300,6 +314,118 @@ storeRouter.put("/my-store", async (req: Request, res: Response): Promise<any> =
     });
   } catch (error: any) {
     console.error("Update store error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+storeRouter.post("/:id/view", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = req.params.id as string;
+    const { viewerId } = req.body;
+
+    const store = await prisma.store.findUnique({
+      where: { id },
+      select: { id: true, designerId: true, views: true }
+    });
+
+    if (!store) {
+      return res.status(404).json({ error: "Store not found." });
+    }
+
+    if (viewerId && store.designerId === viewerId) {
+      return res.status(200).json({ id: store.id, views: store.views });
+    }
+
+    const updatedStore = await prisma.store.update({
+      where: { id },
+      data: { views: { increment: 1 } },
+      select: { id: true, views: true, designerId: true }
+    });
+
+    invalidateResponseCache(`stores:designer:${updatedStore.designerId}`);
+
+    return res.status(200).json({ id: updatedStore.id, views: updatedStore.views });
+  } catch (error: any) {
+    console.error("Track store view error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+storeRouter.post("/:id/report", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = req.params.id as string;
+    const { userId, reason, details } = req.body;
+
+    if (!userId || !reason) {
+      return res.status(400).json({ error: "userId and reason are required." });
+    }
+
+    const [store, user] = await Promise.all([
+      prisma.store.findUnique({ where: { id } }),
+      prisma.user.findUnique({ where: { id: userId } })
+    ]);
+
+    if (!store) {
+      return res.status(404).json({ error: "Store not found." });
+    }
+    if (!user) {
+      return res.status(404).json({ error: "User profile not found." });
+    }
+
+    const ticket = await prisma.supportTicket.create({
+      data: {
+        ticketNumber: `RPT-${Date.now().toString(36).toUpperCase()}`,
+        userId,
+        subject: `Reported store: ${store.name}`,
+        category: "REPORT_STORE",
+        status: "OPEN",
+        lastMessage: `${reason}${details ? ` - ${details}` : ""}`,
+        messages: {
+          create: {
+            senderId: userId,
+            senderName: user.fullName,
+            senderRole: "USER",
+            content: `Store ID: ${id}\nDesigner ID: ${store.designerId}\nReason: ${reason}${details ? `\nDetails: ${details}` : ""}`
+          }
+        }
+      }
+    });
+
+    return res.status(201).json({ message: "Store report submitted.", ticket });
+  } catch (error: any) {
+    console.error("Report store error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+storeRouter.delete("/:id", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = req.params.id as string;
+    const designerId = req.query.designerId as string | undefined;
+
+    if (!designerId) {
+      return res.status(400).json({ error: "designerId is required to delete a store." });
+    }
+
+    const store = await prisma.store.findUnique({
+      where: { id },
+      select: { id: true, designerId: true }
+    });
+
+    if (!store) {
+      return res.status(404).json({ error: "Store not found." });
+    }
+    if (store.designerId !== designerId) {
+      return res.status(403).json({ error: "Only the store owner can delete this store." });
+    }
+
+    await prisma.store.delete({ where: { id } });
+    invalidateResponseCache(`stores:designer:${designerId}`);
+    invalidateResponseCache("posts:list");
+
+    return res.status(200).json({ message: "Store deleted successfully." });
+  } catch (error: any) {
+    console.error("Delete store error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });

@@ -232,18 +232,27 @@ storePostRouter.post("/", async (req: Request, res: Response): Promise<any> => {
     }
 
     let quoteInquiryId: string | null = null;
+    let quoteInquiry: any = null;
     if (isClientRequest) {
       const defaultStore = await prisma.store.findFirst();
       if (defaultStore) {
+        const mediaItems = media.map((m: any, index: number) => ({
+          url: m.url,
+          order: m.order ?? index
+        }));
         const piece = await prisma.piece.create({
           data: {
             storeId: defaultStore.id,
             name: caption?.split("\n")[0] || "Custom Dress Design",
             description: caption || "Custom Beviks costume request from patron",
             price: budget ? parseFloat(budget) : 0,
-            primaryImageUrl: media?.[0]?.url || "https://images.unsplash.com/photo-1595777457583-95e059d581b8?w=600&auto=format&fit=crop&q=80",
+            primaryImageUrl: mediaItems[0]?.url || "",
             category: "CUSTOM",
             heritage: "Custom",
+            status: "DRAFT",
+            images: {
+              create: mediaItems
+            }
           }
         });
 
@@ -255,9 +264,34 @@ storePostRouter.post("/", async (req: Request, res: Response): Promise<any> => {
             specialInstructions: caption,
             budget: budget ? parseFloat(budget) : 0,
             status: "PENDING",
+            inspirations: {
+              create: mediaItems.map((item: any) => ({ url: item.url }))
+            }
           }
         });
         quoteInquiryId = inquiry.id;
+        quoteInquiry = await prisma.quoteInquiry.findUnique({
+          where: { id: inquiry.id },
+          include: {
+            inspirations: true,
+            customer: { select: { id: true, fullName: true, profileImageUrl: true } },
+            designer: { select: { id: true, fullName: true, email: true } },
+            piece: {
+              include: {
+                images: { orderBy: { order: "asc" } }
+              }
+            },
+            quotation: {
+              include: {
+                order: {
+                  include: {
+                    timeline: { orderBy: { createdAt: "asc" } }
+                  }
+                }
+              }
+            }
+          }
+        });
       }
     }
 
@@ -288,9 +322,13 @@ storePostRouter.post("/", async (req: Request, res: Response): Promise<any> => {
     });
 
     cache.deletePattern("posts:list");
+    if (isClientRequest) {
+      cache.deletePattern(`closets:user:${designerId}`);
+    }
 
     return res.status(201).json({
       ...post,
+      quoteInquiry,
       canRequestQuote: canPostRequestQuote(post),
       likesCount: 0,
       commentsCount: 0,

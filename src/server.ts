@@ -18,6 +18,7 @@ import { chatRouter } from "./routes/chat.js";
 import { notificationRouter } from "./routes/notification.js";
 import { reviewRouter } from "./routes/review.js";
 import { supportRouter } from "./routes/support.js";
+import { searchRouter } from "./routes/search.js";
 
 
 dotenv.config();
@@ -83,6 +84,7 @@ app.use("/api", chatRouter);
 app.use("/api", notificationRouter);
 app.use("/api", reviewRouter);
 app.use("/api/support", supportRouter);
+app.use("/api", searchRouter);
 
 // Home route to redirect to API Docs
 app.get("/", (req, res) => {

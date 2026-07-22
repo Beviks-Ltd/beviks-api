@@ -231,6 +231,7 @@ quotationRouter.post("/inquiries/:inquiryId/quotation", async (req: Request, res
 
     invalidateResponseCache("quotations:");
     invalidateResponseCache("inquiries:");
+    invalidateResponseCache(`closets:user:${inquiry.customerId}`);
 
     runInBackground("quotation.created.notifications", async () => {
       await prisma.notification.create({
@@ -466,6 +467,7 @@ quotationRouter.put("/quotations/:id", async (req: Request, res: Response): Prom
 
     invalidateResponseCache("quotations:");
     invalidateResponseCache("inquiries:");
+    invalidateResponseCache(`closets:user:${updatedQuotation.inquiry.customerId}`);
 
     runInBackground("quotation.updated.notifications", async () => {
       await prisma.notification.create({
@@ -609,6 +611,7 @@ quotationRouter.post("/quotations/:id/accept", async (req: Request, res: Respons
     invalidateResponseCache("quotations:");
     invalidateResponseCache("inquiries:");
     invalidateResponseCache("orders:");
+    invalidateResponseCache(`closets:user:${quotation.inquiry.customerId}`);
 
     runInBackground("quotation.accepted.notifications", async () => {
       const notificationQuotation = await prisma.quotation.findUnique({
@@ -714,6 +717,7 @@ quotationRouter.post("/quotations/:id/reject", async (req: Request, res: Respons
         inquiry: {
           select: {
             designerId: true,
+            customerId: true,
           }
         }
       }
@@ -747,6 +751,7 @@ quotationRouter.post("/quotations/:id/reject", async (req: Request, res: Respons
 
     invalidateResponseCache("quotations:");
     invalidateResponseCache("inquiries:");
+    invalidateResponseCache(`closets:user:${quotation.inquiry.customerId}`);
 
     runInBackground("quotation.rejected.notifications", async () => {
       const notificationQuotation = await prisma.quotation.findUnique({

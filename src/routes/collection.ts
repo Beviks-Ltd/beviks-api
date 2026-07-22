@@ -182,6 +182,43 @@ collectionRouter.get("/stores/:storeId/collections", async (req: Request, res: R
   }
 });
 
+collectionRouter.get("/collections", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 12, 30);
+    const collections = await prisma.collection.findMany({
+      include: {
+        store: {
+          select: {
+            id: true,
+            designerId: true,
+            name: true,
+            logoUrl: true,
+          }
+        },
+        pieces: {
+          include: {
+            piece: {
+              include: {
+                images: { orderBy: { order: "asc" } }
+              }
+            }
+          }
+        }
+      },
+      orderBy: [
+        { views: "desc" },
+        { updatedAt: "desc" }
+      ],
+      take: limit,
+    });
+
+    return res.status(200).json(collections);
+  } catch (error: any) {
+    console.error("Get featured collections error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
 /**
  * @openapi
  * /api/collections/{id}:

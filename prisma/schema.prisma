@@ -328,6 +328,7 @@ model Piece {
   category        String
   heritage        String
   status          String            @default("PUBLISHED") // "PUBLISHED" or "DRAFT"
+  views           Int               @default(0)
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
   images          PieceImage[]
@@ -356,6 +357,7 @@ model Collection {
   name      String
   story     String
   imageUrl  String
+  views     Int               @default(0)
   createdAt DateTime          @default(now())
   updatedAt DateTime          @updatedAt
   pieces    CollectionPiece[]

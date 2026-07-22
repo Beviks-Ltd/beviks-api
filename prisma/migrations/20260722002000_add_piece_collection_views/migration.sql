@@ -1,0 +1,5 @@
+ALTER TABLE "Piece" ADD COLUMN IF NOT EXISTS "views" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "Collection" ADD COLUMN IF NOT EXISTS "views" INTEGER NOT NULL DEFAULT 0;
+
+CREATE INDEX IF NOT EXISTS "Piece_views_idx" ON "Piece"("views");
+CREATE INDEX IF NOT EXISTS "Collection_views_idx" ON "Collection"("views");

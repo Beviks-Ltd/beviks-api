@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { prisma } from "../db.js";
+import { invalidateResponseCache } from "../utils/responseCache.js";
 
 export const collectionRouter = Router();
 
@@ -218,7 +219,8 @@ collectionRouter.get("/collections/:id", async (req: Request, res: Response): Pr
             id: true,
             designerId: true,
             name: true,
-            logoUrl: true
+            logoUrl: true,
+            coverUrl: true
           }
         },
         pieces: {
@@ -255,6 +257,31 @@ collectionRouter.get("/collections/:id", async (req: Request, res: Response): Pr
     });
   } catch (error: any) {
     console.error("Get collection error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+collectionRouter.post("/collections/:id/view", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = req.params.id as string;
+
+    const collection = await prisma.collection.update({
+      where: { id },
+      data: { views: { increment: 1 } },
+      select: {
+        id: true,
+        views: true,
+        store: { select: { designerId: true } }
+      }
+    });
+
+    invalidateResponseCache(`stores:designer:${collection.store.designerId}`);
+    return res.status(200).json({ id: collection.id, views: collection.views });
+  } catch (error: any) {
+    if (error?.code === "P2025") {
+      return res.status(404).json({ error: "Collection not found." });
+    }
+    console.error("Track collection view error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });

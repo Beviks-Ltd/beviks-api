@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { prisma } from "../db.js";
+import { invalidateResponseCache } from "../utils/responseCache.js";
 
 export const pieceRouter = Router();
 
@@ -218,6 +219,7 @@ pieceRouter.get("/pieces/:id", async (req: Request, res: Response): Promise<any>
             name: true,
             designerId: true,
             logoUrl: true,
+            coverUrl: true,
             description: true
           }
         }
@@ -251,6 +253,31 @@ pieceRouter.get("/pieces/:id", async (req: Request, res: Response): Promise<any>
     });
   } catch (error: any) {
     console.error("Get piece error:", error);
+    return res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+pieceRouter.post("/pieces/:id/view", async (req: Request, res: Response): Promise<any> => {
+  try {
+    const id = req.params.id as string;
+
+    const piece = await prisma.piece.update({
+      where: { id },
+      data: { views: { increment: 1 } },
+      select: {
+        id: true,
+        views: true,
+        store: { select: { designerId: true } }
+      }
+    });
+
+    invalidateResponseCache(`stores:designer:${piece.store.designerId}`);
+    return res.status(200).json({ id: piece.id, views: piece.views });
+  } catch (error: any) {
+    if (error?.code === "P2025") {
+      return res.status(404).json({ error: "Piece not found." });
+    }
+    console.error("Track piece view error:", error);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });

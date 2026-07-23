@@ -216,6 +216,8 @@ authRouter.post("/register/traditional", async (req: Request, res: Response): Pr
       return res.status(400).json({ error: "Missing required fields: fullName, email, password, role" });
     }
 
+    const trimmedPassword = password.trim();
+
     if (role !== "CUSTOMER" && role !== "DESIGNER") {
       return res.status(400).json({ error: "Invalid role. Must be CUSTOMER or DESIGNER." });
     }
@@ -227,7 +229,7 @@ authRouter.post("/register/traditional", async (req: Request, res: Response): Pr
     }
 
     // Hash password
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await bcrypt.hash(trimmedPassword, 10);
 
     // Create user
     const user = await prisma.user.create({
@@ -1007,6 +1009,8 @@ authRouter.post("/login/traditional", async (req: Request, res: Response): Promi
       return res.status(400).json({ error: "Missing required fields: email, password" });
     }
 
+    const trimmedPassword = password.trim();
+
     const user = await prisma.user.findUnique({
       where: { email },
       include: { designerProfile: true }
@@ -1016,7 +1020,7 @@ authRouter.post("/login/traditional", async (req: Request, res: Response): Promi
       return res.status(400).json({ error: "Invalid email or password" });
     }
 
-    const passwordMatch = await bcrypt.compare(password, user.passwordHash);
+    const passwordMatch = await bcrypt.compare(trimmedPassword, user.passwordHash);
     if (!passwordMatch) {
       return res.status(400).json({ error: "Invalid email or password" });
     }
@@ -1407,8 +1411,10 @@ authRouter.get("/reset-password", (req: Request, res: Response): any => {
           </style>
           <script>
             function validateForm(e) {
-              const p = document.getElementById("password").value;
-              const cp = document.getElementById("confirm").value;
+              const pInput = document.getElementById("password");
+              const cpInput = document.getElementById("confirm");
+              const p = pInput.value.trim();
+              const cp = cpInput.value.trim();
               const err = document.getElementById("err");
               
               if (p.length < 6) {
@@ -1423,6 +1429,8 @@ authRouter.get("/reset-password", (req: Request, res: Response): any => {
                 err.style.display = "block";
                 return false;
               }
+              pInput.value = p;
+              cpInput.value = cp;
               return true;
             }
           </script>
@@ -1633,7 +1641,8 @@ authRouter.post("/reset-password", async (req: Request, res: Response): Promise<
       return res.status(404).json({ error: "User not found." });
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    const trimmedPassword = password.trim();
+    const passwordHash = await bcrypt.hash(trimmedPassword, 10);
 
     await prisma.user.update({
       where: { email: decoded.email },
@@ -1957,6 +1966,9 @@ authRouter.post("/change-password", async (req: Request, res: Response): Promise
       return res.status(400).json({ error: "userId, oldPassword, and newPassword are required parameters." });
     }
 
+    const trimmedOldPassword = oldPassword.trim();
+    const trimmedNewPassword = newPassword.trim();
+
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       return res.status(404).json({ error: "User profile not found." });
@@ -1966,12 +1978,12 @@ authRouter.post("/change-password", async (req: Request, res: Response): Promise
       return res.status(400).json({ error: "Social provider accounts cannot change password directly." });
     }
 
-    const isMatch = await bcrypt.compare(oldPassword, user.passwordHash);
+    const isMatch = await bcrypt.compare(trimmedOldPassword, user.passwordHash);
     if (!isMatch) {
       return res.status(400).json({ error: "Current password does not match our records." });
     }
 
-    const newHash = await bcrypt.hash(newPassword, 10);
+    const newHash = await bcrypt.hash(trimmedNewPassword, 10);
     await prisma.user.update({
       where: { id: userId },
       data: { passwordHash: newHash }
